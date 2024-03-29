@@ -29,6 +29,7 @@ class MessagePassing(Module):
 
         self.flow = flow
         self.node_dim = node_dim
+        self.edge_index = None
 
         self.__msg_params__ = OrderedDict(inspect.signature(self.message).parameters)
         self.__aggr_params__ = OrderedDict(inspect.signature(self.aggregate).parameters)
@@ -49,7 +50,7 @@ class MessagePassing(Module):
 
             if idx is not None and is_tensor(data):
                 size[idx] = data.shape[self.node_dim]
-                out[arg] = self.collect(data, edge_index[idx], self.node_dim)
+                out[arg] = data.index_select(self.node_dim, edge_index[idx])
             else:
                 out[arg] = data
 
@@ -67,14 +68,12 @@ class MessagePassing(Module):
         return out
 
     def forward(self, edge_index, size=None, **kwargs):
+        self.edge_index = edge_index
         size = __process_size__(size)
         kwargs = self.__collect__(edge_index, size, kwargs)
         out = self.message(**__distribute__(self.__msg_params__, kwargs))
         out = self.aggregate(out, **__distribute__(self.__aggr_params__, kwargs))
         return out if not isinstance(out, tuple) else out[0]
-
-    def collect(self, index, dim, inputs):
-        raise NotImplementedError("Not implemented, since it is a base class.")
 
     def aggregate(self, inputs, index, dim_size):
         raise NotImplementedError("Not implemented, since it is a base class.")

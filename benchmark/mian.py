@@ -9,14 +9,14 @@ from prettytable import PrettyTable
 from torch import (arange, bool, cuda, device, Tensor, from_numpy, int64, stack, ones, testing, no_grad, tensor,
                    zeros_like, float32, rand)
 
-from benchmark_message_passing.message_passing import (NativePytorchIndexSelectScatterAddMessagePassing,
-                                                       NativePytorchGatherScatterAddMessagePassing,
-                                                       NativePytorchCOOSparseMatrixMessagePassing,
-                                                       NativePytorchCSRSparseMatrixMessagePassing,
-                                                       TorchScatterGatherCOOScatterAddMessagePassing,
-                                                       TorchScatterGatherCSRScatterAddMessagePassing,
-                                                       MKLCSRSparseMatrixMessagePassing,
-                                                       )
+from benchmark.message_passing import (NativePytorchScatterAddMessagePassing,
+                                       NativePytorchCOOSparseMatrixMessagePassing,
+                                       NativePytorchCSRSparseMatrixMessagePassing,
+                                       TorchScatterCOOScatterAddMessagePassing,
+                                       TorchScatterGatherCOOSegmentCOO,
+                                       TorchScatterGatherCSRSegmentCSR,
+                                       MKLCSRSparseMatrixMessagePassing,
+                                       )
 
 
 def underline(text, flag=True):
@@ -80,20 +80,20 @@ if __name__ == '__main__':
     [download_from_tamu_sparse_matrix(dataset) for dataset in datasets]
     edge_index_dict = {name: load_matrix(name) for _, name in datasets}
 
-    message_passing_classes = [NativePytorchIndexSelectScatterAddMessagePassing,
-                               NativePytorchGatherScatterAddMessagePassing,
+    message_passing_classes = (NativePytorchScatterAddMessagePassing,
                                NativePytorchCOOSparseMatrixMessagePassing,
                                NativePytorchCSRSparseMatrixMessagePassing,
-                               TorchScatterGatherCOOScatterAddMessagePassing,
-                               TorchScatterGatherCSRScatterAddMessagePassing,
+                               TorchScatterCOOScatterAddMessagePassing,
+                               TorchScatterGatherCOOSegmentCOO,
+                               TorchScatterGatherCSRSegmentCSR,
                                MKLCSRSparseMatrixMessagePassing,
-                               ]
-    message_passing_classes_names = {NativePytorchIndexSelectScatterAddMessagePassing: "Native Pytorch Index-Select and Scatter Add",
-                                     NativePytorchGatherScatterAddMessagePassing: "Native Pytorch Gather and Scatter Add",
+                               )
+    message_passing_classes_names = {NativePytorchScatterAddMessagePassing: "Native Pytorch Scatter Add",
                                      NativePytorchCOOSparseMatrixMessagePassing: "Native Pytorch COO Sparse Matrix",
                                      NativePytorchCSRSparseMatrixMessagePassing: "Native Pytorch CSR Sparse Matrix",
-                                     TorchScatterGatherCOOScatterAddMessagePassing: "Torch_Scatter COO Scatter Add",
-                                     TorchScatterGatherCSRScatterAddMessagePassing: "Torch_Scatter CSR Scatter Add",
+                                     TorchScatterCOOScatterAddMessagePassing: "Torch Scatter COO Scatter Add",
+                                     TorchScatterGatherCOOSegmentCOO: "Torch Scatter Gather COO Segment COO",
+                                     TorchScatterGatherCSRSegmentCSR: "Torch Scatter Gather CSR Segment CSR",
                                      MKLCSRSparseMatrixMessagePassing: "MKL CSR Sparse Matrix",
                                      }
 
@@ -107,12 +107,12 @@ if __name__ == '__main__':
         x = ones((num_nodes, 1), device=device, dtype=float32)
         output_per_message_passing[cls.__name__] = message_passing.forward(edge_index, x=x)
 
-    outputs_0 = output_per_message_passing[NativePytorchIndexSelectScatterAddMessagePassing.__name__]
+    outputs_0 = output_per_message_passing[NativePytorchScatterAddMessagePassing.__name__]
     for cls in message_passing_classes[1:]:
         outputs_i = output_per_message_passing[cls.__name__]
         msg = f"Failed on {cls.__name__},\n{outputs_0} != \n{outputs_i}"
         testing.assert_close(outputs_0, outputs_i, rtol=1e-5, atol=1e-5, msg=msg)
-    print("All tests passed! All message passing classes have the same output.")
+    print("All message passing classes have the same output.")
 
     # Timing
     for name, edge_index in edge_index_dict.items():
@@ -130,6 +130,7 @@ if __name__ == '__main__':
         table = PrettyTable(align="l")
         table.field_names = [bold("SIZES"), ] + [bold(f"{size}") for size in sizes]
         for i, cls in enumerate(message_passing_classes):
-            table.add_row([bold(message_passing_classes_names[cls])] + [underline(f'{t:.5f}', f) for t, f in zip(ts[i], winner[i])])
+            table.add_row([bold(message_passing_classes_names[cls])] + [underline(f'{t:.5f}', f) for t, f in
+                                                                        zip(ts[i], winner[i])])
         print(f'{bold(name.upper())}:')
         print(table)
