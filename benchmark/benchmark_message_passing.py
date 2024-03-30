@@ -130,7 +130,7 @@ if __name__ == '__main__':
         table = PrettyTable(align="l")
         table.field_names = [bold("SIZES"), ] + [bold(f"{size}") for size in sizes]
         for i, cls in enumerate(message_passing_classes):
-            table.add_row([bold(message_passing_classes_names[cls])] + [underline(f'{t:.5f}', f) for t, f in
-                                                                        zip(ts[i], winner[i])])
+            table.add_row([bold(message_passing_classes_names[cls])] +
+                          [underline(f'{t:.5f}', f) for t, f in zip(ts[i], winner[i])])
         print(f'{bold(name.upper())}:')
         print(table)
