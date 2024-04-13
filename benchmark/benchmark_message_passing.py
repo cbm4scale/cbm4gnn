@@ -20,24 +20,24 @@ from benchmark.message_passing import (NativePytorchScatterAddMessagePassing,
 
 
 def underline(text, flag=True):
-    return f'\033[4m{text}\033[0m' if flag else text
+    return f"\033[4m{text}\033[0m" if flag else text
 
 
 def bold(text, flag=True):
-    return f'\033[1m{text}\033[0m' if flag else text
+    return f"\033[1m{text}\033[0m" if flag else text
 
 
 def download_from_tamu_sparse_matrix(dataset: Tuple[str, str]) -> None:
-    url = 'https://sparse.tamu.edu/mat/{}/{}.mat'
+    url = "https://sparse.tamu.edu/mat/{}/{}.mat"
     group, name = dataset
-    if not exists(f'{name}.mat'):
-        print(f'Downloading {group}/{name}:')
+    if not exists(f"{name}.mat"):
+        print(f"Downloading {group}/{name}:")
         download(url.format(group, name))
-        print('')
+        print("")
 
 
 def load_matrix(name: str) -> Tensor:
-    mat = loadmat(f'{name}.mat')['Problem'][0][0][2].tocsr()
+    mat = loadmat(f"{name}.mat")["Problem"][0][0][2].tocsr()
     row = from_numpy(mat.tocoo().row).to(device, int64)
     col = from_numpy(mat.tocoo().col).to(device, int64)
     edge_index = stack([row, col], dim=0)
@@ -64,7 +64,7 @@ def time_func(message_passing_cls, edge_index, num_nodes, size, iters=5, warmup=
     return t_total / iters
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # MKL doesn't support cuda so don't run this on cuda to avoid errors and have a fair comparison
     device = device("cpu")
 
@@ -131,6 +131,6 @@ if __name__ == '__main__':
         table.field_names = [bold("SIZES"), ] + [bold(f"{size}") for size in sizes]
         for i, cls in enumerate(message_passing_classes):
             table.add_row([bold(message_passing_classes_names[cls])] +
-                          [underline(f'{t:.5f}', f) for t, f in zip(ts[i], winner[i])])
-        print(f'{bold(name.upper())}:')
+                          [underline(f"{t:.5f}", f) for t, f in zip(ts[i], winner[i])])
+        print(f"{bold(name.upper())}:")
         print(table)

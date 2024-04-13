@@ -24,6 +24,7 @@ class NativePytorchScatterAddMessagePassing(MessagePassing):
                      dtype=inputs.dtype,
                      ).scatter_add_(self.node_dim, index, inputs)
 
+
 class NativePytorchCOOSparseMatrixMessagePassing(MessagePassing):
     def __init__(self, flow: str = "source_to_target", node_dim: int = 0, cached: bool = True):
         super(NativePytorchCOOSparseMatrixMessagePassing, self).__init__(flow, node_dim)
@@ -81,7 +82,7 @@ class TorchScatterGatherCOOSegmentCOO(MessagePassing):
 class TorchScatterGatherCSRSegmentCSR(MessagePassing):
     def aggregate(self, inputs, index, dim_size):
         index_ptr = cat([tensor([0]), index.bincount().cumsum(0)], dim=0)
-        return segment_csr(inputs, index_ptr, reduce='add')
+        return segment_csr(inputs, index_ptr, reduce="add")
 
 
 class MKLCSRSparseMatrixMessagePassing(MessagePassing):

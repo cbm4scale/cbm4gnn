@@ -58,15 +58,15 @@ void csr_s_spmm_(const at::Tensor& lhs_ptr,
 
     sparse_status_t s_coo;
     sparse_matrix_t coo;
-    
-    s_coo = mkl_sparse_s_create_coo(&coo,                                 // mkl matrix reference
+
+    s_coo = mkl_sparse_s_create_coo(&coo,                                   // mkl matrix reference
                                     SPARSE_INDEX_BASE_ZERO,                 // index style (c-style)
-                                    lda,                             // number of rows
-                                    ldb,                             // number of columns
-                                    nnz,                                // number of nonzeros
-                                    cbm_row,  // pointer to row_coo
-                                    cbm_col,  // pointer to col_coo
-                                    cbm_val);             // pointer to val_coo
+                                    lda,                                    // number of rows
+                                    ldb,                                    // number of columns
+                                    nnz,                                    // number of nonzeros
+                                    cbm_row,                                // pointer to row_coo
+                                    cbm_col,                                // pointer to col_coo
+                                    cbm_val);                               // pointer to val_coo
     
     check_status(s_coo);
 
