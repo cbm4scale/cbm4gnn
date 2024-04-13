@@ -9,29 +9,50 @@ import argparse
 import wget
 import torch
 from scipy.io import loadmat
+from scipy.sparse import csr_matrix
 from torch import zeros
+
+from torch_geometric.datasets import Planetoid
 
 from torch_scatter import scatter, segment_coo, segment_csr
 
 from benchmark.mkl_csr_spmm import mkl_single_csr_spmm
 
 short_rows = [
+    ("Planetoid", "Cora"),
+    ("Planetoid", "Citeseer"),
+    ("Planetoid", "Pubmed"),
     ("DIMACS10", "citationCiteseer"),
     ("SNAP", "web-Stanford"),
-]
-long_rows = [
-    # ("Janna", "StocF-1465"),
-    # ("GHS_psdef", "ldoor"),
+    ("Janna", "StocF-1465"),
+    ("GHS_psdef", "ldoor"),
 ]
 
 
-def download(dataset):
+def download_texas_A_and_M_university(dataset):
     url = "https://sparse.tamu.edu/mat/{}/{}.mat"
     group, name = dataset
     if not osp.exists(f"{name}.mat"):
         print(f"Downloading {group}/{name}:")
         wget.download(url.format(group, name))
         print("")
+
+
+def read_texas_A_and_M_university(dataset):
+    group, name = dataset
+    return loadmat(f"{name}.mat")["Problem"][0][0][2].tocsr()
+
+
+def download_planetoid_dataset(name, split: str = "public",):
+    Planetoid(root="./", name=name, split=split)
+
+
+def read_planetoid_dataset(name):
+    edge_index = Planetoid(root="./", name=name).data.edge_index
+    values = torch.ones(edge_index.size(1), dtype=torch.float32)
+    coo = torch.sparse_coo_tensor(edge_index, values, (edge_index.size(1), edge_index.size(1)))
+    csr = coo.to_sparse_csr()
+    return csr_matrix((csr.values(), csr.col_indices(), csr.crow_indices()), shape=csr.size())
 
 
 def underline(text, flag=True):
@@ -41,10 +62,14 @@ def underline(text, flag=True):
 def bold(text, flag=True):
     return f"\033[1m{text}\033[0m" if flag else text
 
+
 @torch.no_grad()
 def correctness(dataset):
     group, name = dataset
-    mat = loadmat(f"{name}.mat")["Problem"][0][0][2].tocsr()
+    if group == "Planetoid":
+        mat = read_planetoid_dataset(name)
+    else:
+        mat = read_texas_A_and_M_university(dataset)
     rowptr = torch.from_numpy(mat.indptr).to(args.device, torch.long)
     row = torch.from_numpy(mat.tocoo().row).to(args.device, torch.long)
     col = torch.from_numpy(mat.tocoo().col).to(args.device, torch.long)
@@ -94,7 +119,10 @@ def time_func(func, x):
 
 def timing(dataset):
     group, name = dataset
-    mat = loadmat(f"{name}.mat")["Problem"][0][0][2].tocsr()
+    if group == "Planetoid":
+        mat = read_planetoid_dataset(name)
+    else:
+        mat = read_texas_A_and_M_university(dataset)
     rowptr = torch.from_numpy(mat.indptr).to(args.device, torch.long)
     row = torch.from_numpy(mat.tocoo().row).to(args.device, torch.long)
     col = torch.from_numpy(mat.tocoo().col).to(args.device, torch.long)
@@ -173,7 +201,11 @@ if __name__ == "__main__":
 
     for _ in range(10):  # Warmup.
         torch.randn(100, 100, device=args.device).sum()
-    for dataset in itertools.chain(short_rows, long_rows):
-        download(dataset)
+    for dataset in itertools.chain(short_rows):
+        group, name = dataset
+        if group == "Planetoid":
+            mat = download_planetoid_dataset(name)
+        else:
+            mat = download_texas_A_and_M_university(dataset)
         correctness(dataset)
         timing(dataset)
