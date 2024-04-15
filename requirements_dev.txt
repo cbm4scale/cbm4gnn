@@ -1,0 +1,3 @@
+scipy
+wget
+torch_geometric
