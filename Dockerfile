@@ -2,6 +2,10 @@
 # docker build -t cbm4gnn .
 # To run the image, run the following command:
 # docker run --gpus all --rm -ti --ipc=host --name cbm4gnn_instance cbm4gnn /bin/bash
+# Verify the installation the installation of MKL by running the following commands:
+# python -m timeit --setup="import torch; net = torch.nn.Linear(1000, 1000); batch = torch.rand(1000, 1000)" "net(batch)"
+# python -m timeit --setup="import torch; from torch.utils import mkldnn as mkldnn_utils; net = torch.nn.Linear(1000, 1000); net = mkldnn_utils.to_mkldnn(net); batch = torch.rand(1000, 1000); batch = batch.to_mkldnn()" "net(batch)"
+# The two commands should return similar results, which indicates that MKL is being used by PyTorch.
 
 # Base Image
 ARG BASE_IMAGE=nvidia/cuda:12.1.0-devel-ubuntu22.04
