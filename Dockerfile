@@ -1,10 +1,10 @@
 # To build the image, run the following command:
 # docker build -t cbm4gnn .
 # To run the image, run the following command:
-# docker run --gpus all --rm -ti --ipc=host --name cbm4gnn_instance cbm4gnn  /bin/bash
+# docker run --gpus all --rm -ti --ipc=host --name cbm4gnn_instance cbm4gnn /bin/bash
 
 # Base Image
-ARG BASE_IMAGE=ubuntu:22.04
+ARG BASE_IMAGE=nvidia/cuda:12.1.0-devel-ubuntu22.04
 FROM ${BASE_IMAGE} as base
 
 # Set non-interactive shell
@@ -12,11 +12,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # Install common dependencies and utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        g++ \
         ca-certificates \
         wget \
-        gpg \
         sudo \
-        gpg-agent \
         build-essential \
         ccache \
         cmake \
@@ -27,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Intel oneAPI keys and repository
+# Install Intel oneAPI keys and repository (if needed for your specific application)
 RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null \
     && echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list \
     && apt-get update && apt-get install -y --no-install-recommends intel-oneapi-mkl intel-oneapi-mkl-devel \
@@ -36,10 +35,15 @@ RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRO
 # Configure MKL for optimal performance
 ENV MKL_THREADING_LAYER=GNU
 ENV MKL_SERVICE_FORCE_INTEL=1
+ENV MKLROOT /opt/intel/oneapi/mkl/latest
+ENV PATH /opt/intel/oneapi/bin:$PATH
+ENV LD_LIBRARY_PATH /opt/intel/oneapi/mkl/latest/lib/intel64:$LD_LIBRARY_PATH
 
 # Configure ccache
 RUN /usr/sbin/update-ccache-symlinks \
     && mkdir /opt/ccache && ccache --set-config=cache_dir=/opt/ccache
+ENV CC /usr/bin/gcc
+ENV CXX /usr/bin/g++
 
 # Setup Miniconda
 ARG PYTHON_VERSION=3.11
@@ -51,56 +55,44 @@ RUN case ${TARGETPLATFORM} in \
     && curl -fsSL -o /tmp/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-${MINICONDA_ARCH}.sh \
     && bash /tmp/miniconda.sh -b -p /opt/conda \
     && rm /tmp/miniconda.sh \
-    && /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy ipython \
-    && /opt/conda/bin/conda clean -ya
-
-# Set MKL environment variables before building PyTorch
-RUN bash -c "source /opt/intel/oneapi/setvars.sh"
-
-# Clone PyTorch and install dependencies
-RUN git clone --recursive https://github.com/pytorch/pytorch /opt/pytorch \
-    && cd /opt/pytorch \
-    && git submodule sync \
-    && git submodule update --init --recursive \
-    && export _GLIBCXX_USE_CXX11_ABI=1 \
-    && export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"} \
-    && /opt/conda/bin/pip install -r requirements.txt
-
-# Build PyTorch with non-interactive cmake configurations
-RUN cd /opt/pytorch \
-    && /opt/conda/bin/python setup.py build --cmake-only \
-    && mkdir -p build \
-    && cd build \
-    && cmake -DBUILD_PYTHON=True -DBUILD_TEST=True -DCMAKE_BUILD_TYPE=Release \
-       -DCMAKE_INSTALL_PREFIX=/opt/pytorch/torch \
-       -DCMAKE_PREFIX_PATH="/opt/conda/lib/python3.11/site-packages" \
-       -DNUMPY_INCLUDE_DIR="/opt/conda/lib/python3.11/site-packages/numpy/core/include" \
-       -DPYTHON_EXECUTABLE="/opt/conda/bin/python" \
-       -DPYTHON_INCLUDE_DIR="/opt/conda/include/python3.11" \
-       -DPYTHON_LIBRARY="/opt/conda/lib/libpython3.11.a" \
-       -DTORCH_BUILD_VERSION="2.4.0a0+git03a05e7" -DUSE_NUMPY=True ..
-
-RUN cd /opt/pytorch \
-    && export CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"} \
-    && /opt/conda/bin/python setup.py develop
+    && /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy \
+    && /opt/conda/bin/conda clean -ya \
+    && /opt/conda/bin/conda install -c conda-forge gcc=12.1.0 --yes
+# Create a symbolic link for python3 and set environment variables
+RUN apt-get update && apt-get install -y g++
+RUN ln -s /opt/conda/bin/python /usr/bin/python3
+ENV PATH /opt/conda/bin:$PATH
+ENV LD_LIBRARY_PATH /opt/conda/lib:$LD_LIBRARY_PATH
+ENV PATH /usr/local/cuda/bin:/usr/bin:$PATH
 
 # Final Image
 FROM ${BASE_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libjpeg-dev \
+        libpng-dev \
+        libgomp1 \
+        build-essential \
+        g++ \
+    && rm -rf /var/lib/apt/lists/*
 LABEL com.nvidia.volumes.needed="nvidia_driver"
 COPY --from=base /opt/conda /opt/conda
 COPY --from=base /opt/intel /opt/intel
-COPY --from=base /opt/pytorch /workspace
 
 # Set MKL environment variables
 RUN bash -c "source /opt/intel/oneapi/setvars.sh"
 
-RUN /opt/conda/bin/pip install -r requirements_dev.txt
-
-ENV PATH /opt/conda/bin:$PATH
+ENV CC /usr/bin/gcc
+ENV CXX /usr/bin/g++
+ENV CUDA_HOME /usr/local/cuda
+ENV PATH /opt/conda/bin:/opt/intel/oneapi/bin:${CUDA_HOME}/bin:$PATH
+ENV LD_LIBRARY_PATH /opt/intel/oneapi/mkl/latest/lib/intel64:${CUDA_HOME}/lib:${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
 ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
-ENV LD_LIBRARY_PATH /usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV PATH /usr/local/nvidia/bin:/usr/local/cuda/bin:$PATH
+ENV MKLROOT /opt/intel/oneapi/mkl/latest
+
 
 COPY ./ /workspace
 WORKDIR /workspace
+# Install additional Python packages
+RUN /opt/conda/bin/pip install -r requirements_dev.txt
+ENV PYTHONPATH /workspace:$PYTHONPATH

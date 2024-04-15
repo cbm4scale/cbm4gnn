@@ -71,8 +71,6 @@ if __name__ == "__main__":
     datasets = [
         ("DIMACS10", "citationCiteseer"),
         ("SNAP", "web-Stanford"),
-        ("Janna", "StocF-1465"),
-        ("GHS_psdef", "ldoor"),
     ]
     sizes = [2, 10, 50, 100, 500, 1000, 1500]
 
@@ -112,7 +110,7 @@ if __name__ == "__main__":
         outputs_i = output_per_message_passing[cls.__name__]
         msg = f"Failed on {cls.__name__},\n{outputs_0} != \n{outputs_i}"
         testing.assert_close(outputs_0, outputs_i, rtol=1e-5, atol=1e-5, msg=msg)
-    print("All message passing classes have the same output.")
+    print("Message passing classes have the same output.")
 
     # Timing
     for name, edge_index in edge_index_dict.items():
