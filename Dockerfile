@@ -2,10 +2,6 @@
 # docker build -t cbm4gnn .
 # To run the image, run the following command:
 # docker run --gpus all --rm -ti --ipc=host --name cbm4gnn_instance cbm4gnn /bin/bash
-# Verify the installation the installation of MKL by running the following commands:
-# python -m timeit --setup="import torch; net = torch.nn.Linear(1000, 1000); batch = torch.rand(1000, 1000)" "net(batch)"
-# python -m timeit --setup="import torch; from torch.utils import mkldnn as mkldnn_utils; net = torch.nn.Linear(1000, 1000); net = mkldnn_utils.to_mkldnn(net); batch = torch.rand(1000, 1000); batch = batch.to_mkldnn()" "net(batch)"
-# The two commands should return similar results, which indicates that MKL is being used by PyTorch.
 
 # Base Image
 ARG BASE_IMAGE=nvidia/cuda:12.1.0-devel-ubuntu22.04
@@ -14,9 +10,19 @@ FROM ${BASE_IMAGE} as base
 # Set non-interactive shell
 ARG DEBIAN_FRONTEND=noninteractive
 
+# Set the working directory
+LABEL com.nvidia.volumes.needed="nvidia_driver"
+
+# Install a supported version of GCC before installing other packages
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:ubuntu-toolchain-r/test \
+    && apt-get install -y gcc-11 g++-11 \
+    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 \
+    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100 \
+    && gcc --version && g++ --version
+
 # Install common dependencies and utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        g++ \
         ca-certificates \
         wget \
         sudo \
@@ -28,6 +34,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libjpeg-dev \
         libpng-dev \
         libgomp1 \
+        python3.11 \
+        python3.11-venv \
+        python3.11-dev \
+        python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Intel oneAPI keys and repository (if needed for your specific application)
@@ -42,6 +52,7 @@ ENV MKL_SERVICE_FORCE_INTEL=1
 ENV MKLROOT /opt/intel/oneapi/mkl/latest
 ENV PATH /opt/intel/oneapi/bin:$PATH
 ENV LD_LIBRARY_PATH /opt/intel/oneapi/mkl/latest/lib/intel64:$LD_LIBRARY_PATH
+RUN bash -c "source /opt/intel/oneapi/setvars.sh"
 
 # Configure ccache
 RUN /usr/sbin/update-ccache-symlinks \
@@ -49,54 +60,39 @@ RUN /usr/sbin/update-ccache-symlinks \
 ENV CC /usr/bin/gcc
 ENV CXX /usr/bin/g++
 
-# Setup Miniconda
-ARG PYTHON_VERSION=3.11
-ARG TARGETPLATFORM
-ARG MINICONDA_ARCH=x86_64
-RUN case ${TARGETPLATFORM} in \
-         "linux/arm64")  MINICONDA_ARCH=aarch64  ;; \
-    esac \
-    && curl -fsSL -o /tmp/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-${MINICONDA_ARCH}.sh \
-    && bash /tmp/miniconda.sh -b -p /opt/conda \
-    && rm /tmp/miniconda.sh \
-    && /opt/conda/bin/conda install -y python=${PYTHON_VERSION} cmake conda-build pyyaml numpy \
-    && /opt/conda/bin/conda clean -ya \
-    && /opt/conda/bin/conda install -c conda-forge gcc=12.1.0 --yes
-# Create a symbolic link for python3 and set environment variables
-RUN apt-get update && apt-get install -y g++
-RUN ln -s /opt/conda/bin/python /usr/bin/python3
-ENV PATH /opt/conda/bin:$PATH
-ENV LD_LIBRARY_PATH /opt/conda/lib:$LD_LIBRARY_PATH
-ENV PATH /usr/local/cuda/bin:/usr/bin:$PATH
+# Add a symbolic link for python3.11
+RUN ln -s /usr/bin/python3.11 /usr/bin/python
+# Clone PyTorch repository and checkout to version 2.2
+RUN git clone https://github.com/pytorch/pytorch /opt/pytorch \
+    && cd /opt/pytorch \
+    && git checkout orig/release/2.2
 
-# Final Image
-FROM ${BASE_IMAGE}
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libjpeg-dev \
-        libpng-dev \
-        libgomp1 \
-        build-essential \
-        g++ \
-    && rm -rf /var/lib/apt/lists/*
-LABEL com.nvidia.volumes.needed="nvidia_driver"
-COPY --from=base /opt/conda /opt/conda
-COPY --from=base /opt/intel /opt/intel
+# Update submodules and install dependencies
+RUN cd /opt/pytorch \
+    && git submodule update --init --recursive \
+    && python3.11 -m pip install -r requirements.txt
 
-# Set MKL environment variables
-RUN bash -c "source /opt/intel/oneapi/setvars.sh"
+# This to copy a recent version of the select_compute_arch.cmake file to fix the issue with the CUDA version
+COPY ./select_compute_arch.cmake /opt/pytorch/cmake/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake
 
-ENV CC /usr/bin/gcc
-ENV CXX /usr/bin/g++
-ENV CUDA_HOME /usr/local/cuda
-ENV PATH /opt/conda/bin:/opt/intel/oneapi/bin:${CUDA_HOME}/bin:$PATH
-ENV LD_LIBRARY_PATH /opt/intel/oneapi/mkl/latest/lib/intel64:${CUDA_HOME}/lib:${CUDA_HOME}/lib64:$LD_LIBRARY_PATH
-ENV NVIDIA_VISIBLE_DEVICES all
-ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
-ENV MKLROOT /opt/intel/oneapi/mkl/latest
+# Preparing the PyTorch directory and initiating the build configuration
+RUN cd /opt/pytorch \
+    && python3.11 setup.py develop
 
+# Set the pytorch version
+RUN PYTORCH_VERSION=$(python3.11 -c "import torch; print(torch.__version__)") && \
+    echo "PyTorch version is $PYTORCH_VERSION"
+
+# Clone PyTorch-Scatter repository
+RUN git clone https://github.com/rusty1s/pytorch_scatter.git /opt/pytorch_scatter
+
+# Use the PyTorch version to set the version of torch_scatter dynamically
+RUN cd /opt/pytorch_scatter && \
+    python3.11 setup.py install develop
 
 COPY ./ /workspace
 WORKDIR /workspace
-# Install additional Python packages
-RUN /opt/conda/bin/pip install -r requirements_dev.txt
 ENV PYTHONPATH /workspace:$PYTHONPATH
+
+# Install the required Python packages
+RUN python3.11 -m pip install -r requirements_dev.txt
