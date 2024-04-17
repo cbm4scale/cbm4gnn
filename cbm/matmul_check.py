@@ -45,6 +45,8 @@ def read_texas_A_and_M_university(dataset):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--sequential", action="store_true")
+    parser.add_argument("--iterations", type=int, default=100)
+    parser.add_argument("--features", type=int, default=64)
 
     args = parser.parse_args()
     if (args.sequential) : 
@@ -68,7 +70,7 @@ if __name__ == '__main__':
     c = cbm_matrix(edge_index, values, rows=mat.shape[0], cols=mat.shape[1], alpha=2)
 
     # init embedding
-    x = torch.randn((mat.shape[1], 512), dtype=torch.float32)
+    x = torch.randn((mat.shape[1], args.features), dtype=torch.float32)
 
     if (args.sequential):
         print("Sequential execution...")
@@ -77,7 +79,7 @@ if __name__ == '__main__':
         t1 = time.time()
     
         with torch.no_grad():
-            for _ in range(10):
+            for _ in range(args.features):
                 y1 = a @ x
                 
         t2 = time.time()
@@ -86,7 +88,7 @@ if __name__ == '__main__':
         t1 = time.time()
         
         with torch.no_grad():
-            for _ in range(10):
+            for _ in range(args.features):
                 y2 = c.seq_torch_csr_matmul(x)
     
         t2 = time.time()
@@ -104,7 +106,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             y3 = torch.empty((mat.shape[0], x.shape[1]), dtype=torch.float32)
 
-            for _ in range(10):
+            for _ in range(args.features):
                 seq_mkl_csr_spmm(a,x,y3)
 
         t2 = time.time()
@@ -116,7 +118,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             y4 = torch.empty((mat.shape[0], x.shape[1]), dtype=torch.float32)
 
-            for _ in range(10):
+            for _ in range(args.features):
                 c.seq_mkl_csr_spmm_update(x,y4)
 
         t2 = time.time()
@@ -133,7 +135,7 @@ if __name__ == '__main__':
         t1 = time.time()
 
         with torch.no_grad():
-            for _ in range(10):
+            for _ in range(args.features):
                 y1 = a @ x
 
         t2 = time.time()
@@ -142,7 +144,7 @@ if __name__ == '__main__':
         t1 = time.time()
 
         with torch.no_grad():
-            for _ in range(10):
+            for _ in range(args.features):
                 y2 = c.omp_torch_csr_matmul(x)
 
         t2 = time.time()
@@ -159,7 +161,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             y3 = torch.empty((mat.shape[0], x.shape[1]), dtype=torch.float32)
 
-            for _ in range(10):
+            for _ in range(args.features):
                 omp_mkl_csr_spmm(a,x,y3)
 
         t2 = time.time()
@@ -170,7 +172,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             y4 = torch.empty((mat.shape[0], x.shape[1]), dtype=torch.float32)
 
-            for _ in range(10):
+            for _ in range(args.features):
                 c.omp_mkl_csr_spmm_update(x,y4)
 
         t2 = time.time()
