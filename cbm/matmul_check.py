@@ -1,12 +1,14 @@
 import time
-import torch
 import argparse
+from os.path import exists
 
-import scipy.sparse as sp
+import wget
 from scipy.io import loadmat
+import torch
 
 import cbm_mkl_cpp as cbm_
 from cbm import cbm_matrix
+
 
 def seq_mkl_csr_spmm(a, x, y):
         row_ptr_s = a.crow_indices()[:-1].to(torch.int32)
@@ -25,7 +27,21 @@ def omp_mkl_csr_spmm(a, x, y):
 
         cbm_.omp_s_spmm_csr_int32(
             row_ptr_s, row_ptr_e, col_ptr, val_ptr, x, y)
-        
+
+
+def download_texas_A_and_M_university(dataset):
+    url = "https://sparse.tamu.edu/mat/{}/{}.mat"
+    group, name = dataset
+    if not exists(f"{name}.mat"):
+        print(f"Downloading {group}/{name}:")
+        wget.download(url.format(group, name))
+        print("")
+
+def read_texas_A_and_M_university(dataset):
+    group, name = dataset
+    return loadmat(f"{name}.mat")["Problem"][0][0][2].tocsr()
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--sequential", action="store_true")
@@ -36,7 +52,8 @@ if __name__ == '__main__':
 
     # load dataset for test
     group, name = ('SNAP', 'ca-HepPh')
-    mat = loadmat(f'{name}.mat')['Problem'][0][0][2].tocsr()
+    download_texas_A_and_M_university((group, name))
+    mat = read_texas_A_and_M_university((group, name))
 
     # use edge_index and values to create CSR and CBM format
     row = torch.from_numpy(mat.tocoo().row).to(torch.int32)#(args.device, torch.int64)
