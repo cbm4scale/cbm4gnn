@@ -6,8 +6,8 @@ import wget
 from scipy.io import loadmat
 import torch
 
-import cbm_mkl_cpp as cbm_
-from cbm import cbm_matrix
+import cbm.cbm_mkl_cpp as cbm_
+from cbm.cbm import cbm_matrix
 
 
 def seq_mkl_csr_spmm(a, x, y):
@@ -45,8 +45,8 @@ def read_texas_A_and_M_university(dataset):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--sequential", action="store_true")
-    parser.add_argument("--iterations", type=int, default=100)
-    parser.add_argument("--features", type=int, default=64)
+    parser.add_argument("--iterations", type=int, default=1)
+    parser.add_argument("--features", type=int, default=1000)
 
     args = parser.parse_args()
     if (args.sequential) : 
