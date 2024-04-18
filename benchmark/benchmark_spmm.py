@@ -59,70 +59,81 @@ if __name__ == "__main__":
     if args.sequential:
         torch.set_num_threads(1)
 
+    n_iterations = args.iterations
+    n_features = args.features
+
     execution_mode = "seq" if args.sequential else "omp"
     print(f"Execution mode: {execution_mode}")
-    dataset = PygNodePropPredDataset(name="ogbn-proteins")
+
+    # dataset = Planetoid(root="./", name="Cora")
+    dataset = SNAPDataset(root="./", name='soc-ca-grqc')
+    #dataset = PygNodePropPredDataset(name="ogbn-arxiv")
     # edge_index, *_ = remove_isolated_nodes(to_undirected(dataset[0].edge_index))
     edge_index = dataset[0].edge_index if dataset[0].edge_index is not None else to_edge_index(dataset[0].adj_t)
-    torch_sparse_coo = torch.sparse_coo_tensor(edge_index,
-                                               torch.ones(edge_index.size(1)),
-                                               (edge_index.size(1), edge_index.size(1)),
-                                               )
-    mat = scipy.sparse.csr_matrix((torch_sparse_coo.coalesce().values().numpy(),
-                                   torch_sparse_coo.coalesce().indices().numpy()),
-                                  shape=(edge_index.size(1), edge_index.size(1)))
 
-    # Prepare matrix formats
-    row = torch.from_numpy(mat.tocoo().row).to(torch.int32)
-    col = torch.from_numpy(mat.tocoo().col).to(torch.int32)
-    edge_index = torch.stack([row, col])
-    values = torch.ones(row.size(0), dtype=torch.float32)
+    n_rows = edge_index[0].max() + 1
+    n_cols = edge_index[1].max() + 1
+    values = torch.ones(edge_index.size(1), dtype=torch.float32)
 
+    torch_sparse_coo = torch.sparse_coo_tensor(edge_index, 
+                                               values, 
+                                               (n_rows, n_cols), 
+                                               dtype=torch.float32)
+    
     # Initialize matrices
-    csr_matrix = torch.sparse_coo_tensor(edge_index.to(torch.int32), values, mat.shape).to_sparse_csr()
-    cbm_matrix = cbm_matrix(edge_index, values, rows=mat.shape[0], cols=mat.shape[1], alpha=2)
-    embeddings = torch.randn((mat.shape[1], args.features), dtype=torch.float32)
+    a_matrix = torch_sparse_coo.coalesce().to_sparse_csr()
+    c_matrix = cbm_matrix(edge_index.to(torch.int32), values, alpha=2)
+    embeddings = torch.randn((n_cols, n_features), dtype=torch.float32)
 
     # Timing variables
     timings = {}
 
     start_time = time.time()
     with torch.no_grad():
-        for _ in range(args.features):
-            y1 = csr_matrix @ embeddings
+    
+        for _ in range(n_iterations):
+            y1 = a_matrix @ embeddings
+    
     end_time = time.time()
     timings[f"{execution_mode}-torch-csr"] = end_time - start_time
 
     start_time = time.time()
     with torch.no_grad():
-        update_func = getattr(cbm_matrix, f"{execution_mode}_torch_csr_matmul")
-        for _ in range(args.features):
+        update_func = getattr(c_matrix, f"{execution_mode}_torch_csr_matmul")
+    
+        for _ in range(n_iterations):
             y2 = update_func(embeddings)
+    
     end_time = time.time()
     timings[f"{execution_mode}-torch-cbm"] = end_time - start_time
 
     start_time = time.time()
     with torch.no_grad():
-        y3 = torch.empty((mat.shape[0], embeddings.shape[1]), dtype=torch.float32)
+        y3 = torch.empty((n_rows, embeddings.shape[1]), dtype=torch.float32)
         mkl_csr_spmm = locals()[f"{execution_mode}_mkl_csr_spmm"]
-        for _ in range(args.features):
-            mkl_csr_spmm(csr_matrix, embeddings, y3)
+        
+        for _ in range(n_iterations):
+            mkl_csr_spmm(a_matrix, embeddings, y3)
+    
     end_time = time.time()
     timings[f"{execution_mode}-mkl-csr"] = end_time - start_time
 
     start_time = time.time()
     with torch.no_grad():
-        y4 = torch.empty((mat.shape[0], embeddings.shape[1]), dtype=torch.float32)
-        update_func = getattr(cbm_matrix, f"{execution_mode}_mkl_csr_spmm_update")
-        for _ in range(args.features):
+        y4 = torch.empty((n_rows, embeddings.shape[1]), dtype=torch.float32)
+        update_func = getattr(c_matrix, f"{execution_mode}_mkl_csr_spmm_update")
+        
+        for _ in range(n_iterations):
             update_func(embeddings, y4)
-    end_time = time.time()
-    timings["seq-mkl-cbm"] = end_time - start_time
 
-    torch.testing.assert_close(y1, y2, atol=1e-4, rtol=1e-4)
-    torch.testing.assert_close(y1, y3, atol=1e-4, rtol=1e-4)
-    torch.testing.assert_close(y1, y4, atol=1e-4, rtol=1e-4)
+    end_time = time.time()
+    timings[f"{execution_mode}-mkl-cbm"] = end_time - start_time
 
     # Print all timings
     for operation, time_taken in timings.items():
         print(f"{operation}: {time_taken:.3f} seconds")
+
+    torch.testing.assert_close(y1, y3, atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(y1, y4, atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(y1, y2, atol=1e-4, rtol=1e-4)
+

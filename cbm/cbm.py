@@ -11,6 +11,9 @@ class cbm_matrix:
 
         # TODO: check if rows matches expect value (edge_index.max() + 1)            
 
+        print("input_rows: " , edge_index[0].max() + 1, " input_cols: ", edge_index[0].max() + 1)
+
+
         # call c++ constructor 
         data = cbm_.from_coo_int32_t_(edge_index[0],                # row_indices
                                       edge_index[1],                # col_indices
