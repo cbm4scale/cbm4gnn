@@ -53,6 +53,7 @@ ENV MKLROOT /opt/intel/oneapi/mkl/latest
 ENV PATH /opt/intel/oneapi/bin:$PATH
 ENV LD_LIBRARY_PATH /opt/intel/oneapi/mkl/latest/lib/intel64:$LD_LIBRARY_PATH
 RUN bash -c "source /opt/intel/oneapi/setvars.sh"
+RUN echo "source /opt/intel/oneapi/setvars.sh" >> ~/.bashrc
 
 # Configure ccache
 RUN /usr/sbin/update-ccache-symlinks \
@@ -96,3 +97,6 @@ ENV PYTHONPATH /workspace:$PYTHONPATH
 
 # Install the required Python packages
 RUN python3.11 -m pip install -r requirements_dev.txt
+
+# Build the cbm format
+RUN python3.11 setup.py
