@@ -1,7 +1,7 @@
 import torch
 import warnings
 
-import cbm_mkl_cpp as cbm_
+import cbm.cbm_mkl_cpp as cbm_
 
 warnings.filterwarnings("ignore", message="Sparse CSR tensor support is in beta state", category=UserWarning)
 
