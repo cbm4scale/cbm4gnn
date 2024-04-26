@@ -99,9 +99,9 @@ class cbm_matrix:
 
     # convert coo matrix to pytorch coo tensor.  
     def to_sparse_coo_tensor(self, row, col, val, data_type=torch.float32):
-        
+        max_size = max(row.max(), col.max()) + 1
         edge_index = torch.stack((row, col)) # <-- is this required?
-        coo_tensor = torch.sparse_coo_tensor(edge_index, val).to(data_type).coalesce()
+        coo_tensor = torch.sparse_coo_tensor(edge_index, val, size=(max_size, max_size)).to(data_type).coalesce()
         
         # TODO: validate tensor (values) type
         #torch.testing.assert_close(coo_tensor.values().dtype, data_type)
