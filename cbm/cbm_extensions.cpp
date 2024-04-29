@@ -942,7 +942,7 @@ static inline void omp_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
 
     std::stack<MKL_INT> lifo;
 
-    #pragma omp parallel for schedule(dynamic, 10) private(lifo)
+    #pragma omp parallel for schedule(dynamic, 50) private(lifo)
     for (MKL_INT i = edges_src_ptr[dst_n_rows]; i < edges_src_ptr[dst_n_rows + 1]; i++) {
         lifo.push(edges_dst_ptr[i]);
     
@@ -962,46 +962,39 @@ static inline void omp_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
                 float *x = dst_ptr + (u * dst_n_cols);
                 float *y = dst_ptr + (v * dst_n_cols);
                 
-                cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
+                //cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
+                MKL_INT i;
+                for (i=0; i < dst_n_cols - 15; i+=16) {
+                        __m256 ymm0 = _mm256_loadu_ps(x + i);
+                        __m256 ymm1 = _mm256_loadu_ps(y + i);
+                        __m256 ymm2 = _mm256_loadu_ps(x + i + 8);
+                        __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
+                        ymm1 = _mm256_add_ps(ymm0, ymm1);
+                        ymm3 = _mm256_add_ps(ymm2, ymm3);
+
+                        _mm256_storeu_ps(y + i, ymm1);
+                        _mm256_storeu_ps(y + i + 8, ymm3);
+                    }
+                    
+                if (i < dst_n_cols - 7) {
+                        __m256 ymm0 = _mm256_loadu_ps(x + i);
+                        __m256 ymm1 = _mm256_loadu_ps(y + i);
+                        ymm1 = _mm256_add_ps(ymm0, ymm1);
+
+                        _mm256_storeu_ps(y + i, ymm1);
+                        i += 8;
+                }
+
+                for (; i < dst_n_cols; i++) {
+                    y[i] += x[i];
+                }
 
                 lifo.push(v);
             }
         }
     }
 }
-/*
-static inline void omp_s_update_csr_int32_(const at::Tensor& edges_src,
-                                           const at::Tensor& edges_dst,
-                                           at::Tensor& dst) {
 
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-
-    MKL_INT dst_n_rows = dst.size(0);
-    MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
-    float *dst_ptr = dst.data_ptr<float>();
-    
-    //printf("descendents of virtual: %d\n", edges_src_ptr[dst_n_rows + 1] - edges_src_ptr[dst_n_rows]);
-
-    #pragma omp parallel
-    {
-        //printf("number of threads: %d\n", omp_get_num_threads());
-
-        #pragma omp for schedule(dynamic)
-        for (MKL_INT i = edges_src_ptr[dst_n_rows]; i < edges_src_ptr[dst_n_rows + 1]; i++) {
-            update_task(edges_dst_ptr[i], 
-                        dst_n_rows, 
-                        dst_n_cols, 
-                        edges_src_ptr, 
-                        edges_dst_ptr, 
-                        dst_ptr);
-        }
-    }
-}
-*/
 static inline void omp_s_update_csr_int32_(const at::Tensor& edges_src,
                                            const at::Tensor& edges_dst,
                                            at::Tensor& dst) {
@@ -1016,7 +1009,7 @@ static inline void omp_s_update_csr_int32_(const at::Tensor& edges_src,
     MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
     float *dst_ptr = dst.data_ptr<float>();
 
-    #pragma omp parallel
+    /*#pragma omp parallel
     {
         std::stack<MKL_INT> lifo;
 
@@ -1095,7 +1088,7 @@ static inline void omp_s_update_csr_int32_(const at::Tensor& edges_src,
             }
         }
     }
-/*
+*/
     #pragma omp parallel
     {
         std::stack<MKL_INT> lifo;
@@ -1127,7 +1120,6 @@ static inline void omp_s_update_csr_int32_(const at::Tensor& edges_src,
             }
         }
     }
-*/
 }
 
 static inline void omp_s_update_avx_int32_(const at::Tensor& edges_src,

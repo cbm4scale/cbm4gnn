@@ -13,11 +13,13 @@ from cbm import cbm_mkl_cpp as cbm_
 from cbm.utilization import check_edge_index
 
 short_rows = [
+    ("SNAP", "ca-HepTh"),
     ("SNAP", "ca-HepPh"),
     ("SNAP", "cit-HepTh"),
     ("SNAP", "cit-HepPh"),
     ("SNAP", "ca-AstroPh"),
     ("SNAP", "web-Stanford"),
+    ("SNAP", "web-NotreDame"),
 ]
 
 
@@ -84,9 +86,9 @@ def correctness(dataset):
 
         out3 = c.omp_torch_csr_matmul(x)
 
-        torch.testing.assert_close(out0, out1, atol=1e-2, rtol=1e-2)
-        torch.testing.assert_close(out0, out2, atol=1e-2, rtol=1e-2)
-        torch.testing.assert_close(out0, out3, atol=1e-2, rtol=1e-2)
+        torch.testing.assert_close(out0, out2, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(out0, out3, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(out0, out1, atol=1e-4, rtol=1e-4)
 
 
 def timing(dataset):
