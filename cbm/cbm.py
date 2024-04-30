@@ -79,22 +79,18 @@ class cbm_matrix:
                     s[v].update(s[u])
 
                     for col_index, value in zip(d_cols[v_bot : v_top],d_vals[v_bot : v_top]):
-                        if (value.item() == 1):
+                        if value.item() == 1:
                             s[v].add(col_index.item())
-
-                        elif (value.item() == -1):
+                        elif value.item() == -1:
                             s[v].remove(col_index.item())
-
                         else:
-                            print("something went wrong...")
+                            raise ValueError(f"Failed with the edge index: {edge_index}")
 
         # convert edge_index into list of adjacencies
         a = [set() for n in range(n_rows)]
 
         for row_index, col_index in zip(edge_index[0], edge_index[1]):
             a[row_index.item()].add(col_index.item())
-
-        print("Check correction of CBM format: ", "PASSED" if a == s[:-1] else "FAILED")
 
 
     # convert coo matrix to pytorch coo tensor.  
