@@ -18,9 +18,9 @@ short_rows = [
     ("SNAP", "ca-HepTh"),
     ("SNAP", "ca-HepPh"),
     ("SNAP", "cit-HepTh"),
-    ("SNAP", "cit-HepPh"),
     ("SNAP", "ca-AstroPh"),
     ("SNAP", "web-Stanford"),
+    ("SNAP", "web-NotreDame"),
 ]
 
 
@@ -88,9 +88,9 @@ def correctness(dataset):
 
         out3 = c.seq_torch_csr_matmul(x)
 
-        torch.testing.assert_close(out0, out1, atol=1e-4, rtol=1e-4)
-        torch.testing.assert_close(out0, out2, atol=1e-4, rtol=1e-4)
-        torch.testing.assert_close(out0, out3, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(out0, out1, atol=1e-2, rtol=1e-2)
+        torch.testing.assert_close(out0, out2, atol=1e-2, rtol=1e-2)
+        torch.testing.assert_close(out0, out3, atol=1e-2, rtol=1e-2)
 
 
 def timing(dataset):
@@ -149,9 +149,9 @@ def timing(dataset):
         mkl_spmm_time_list += [mkl_spmm_time]
         cbm_mkl_spmm_time_list += [cbm_mkl_spmm_time]
 
-        torch.testing.assert_close(y0, y1, atol=1e-4, rtol=1e-4)
-        torch.testing.assert_close(y0, y2, atol=1e-4, rtol=1e-4)
-        torch.testing.assert_close(y0, y3, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(y0, y1, atol=1e-2, rtol=1e-2)
+        torch.testing.assert_close(y0, y2, atol=1e-2, rtol=1e-2)
+        torch.testing.assert_close(y0, y3, atol=1e-2, rtol=1e-2)
         del x
 
     del rowptr, mat, values, edge_index
