@@ -9,7 +9,7 @@ def source_environment_and_run_setup(setvars_path):
     os.chdir(setup_dir)
 
     # Combine source and setup.py execution into one command
-    combined_command = f"source {setvars_path} && python setup.py build_ext --inplace"
+    combined_command = f"source {setvars_path} && python setup.py build_ext --inplace" # develop
     subprocess.check_call(combined_command, shell=True, executable="/bin/bash")
 
 
