@@ -1,7 +1,7 @@
 import inspect
 from collections import OrderedDict
 
-from torch import is_tensor, zeros, bincount, cumsum, int64
+from torch import is_tensor
 from torch.nn import Module
 
 msg_special_args = {"edge_index", "edge_index_i", "edge_index_j", "size", "size_i", "size_j"}
@@ -84,10 +84,3 @@ class MessagePassing(Module):
     def message(self, x_j, edge_weight=None):
         return x_j if edge_weight is None else edge_weight.view(-1, 1) * x_j
 
-
-def coo_index_to_csr_indexptr(edge_index_idx):
-    n_rows = edge_index_idx.max() + 1
-    row_counts = bincount(edge_index_idx, minlength=int(n_rows))
-    indptr = zeros(n_rows + 1, dtype=int64)
-    indptr[1:] = cumsum(row_counts, dim=0)
-    return indptr

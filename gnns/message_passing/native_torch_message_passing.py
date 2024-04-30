@@ -1,8 +1,6 @@
-from torch import tensor, cat, empty, ones, int32, zeros, sparse_coo_tensor
-from torch_scatter import scatter, segment_coo, segment_csr
+from torch import zeros, sparse_coo_tensor, ones
 
-from benchmark.message_passing.base_message_passing import MessagePassing
-from benchmark.mkl_csr_spmm import mkl_single_csr_spmm
+from gnns.message_passing.base_message_passing import MessagePassing
 
 
 class NativePytorchScatterAddMessagePassing(MessagePassing):
@@ -67,41 +65,3 @@ class NativePytorchCSRSparseMatrixMessagePassing(MessagePassing):
             a = sparse_coo_tensor(edge_index, ones(edge_index.size(1), dtype=x.dtype), size=size, device=x.device)
             a_t = a.to_sparse_csr().t()
         return a_t @ x
-
-
-class TorchScatterCOOScatterAddMessagePassing(MessagePassing):
-    def aggregate(self, inputs, index, dim_size):
-        return scatter(inputs, index, dim=0, dim_size=dim_size, reduce="add")
-
-
-class TorchScatterGatherCOOSegmentCOO(MessagePassing):
-    def aggregate(self, inputs, index, dim_size):
-        return segment_coo(inputs, index, dim_size=dim_size, reduce="add")
-
-
-class TorchScatterGatherCSRSegmentCSR(MessagePassing):
-    def aggregate(self, inputs, index, dim_size):
-        index_ptr = cat([tensor([0]), index.bincount().cumsum(0)], dim=0)
-        return segment_csr(inputs, index_ptr, reduce="add")
-
-
-class MKLCSRSparseMatrixMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, cached: bool = True):
-        super(MKLCSRSparseMatrixMessagePassing, self).__init__(flow, node_dim)
-        self.cached = cached
-        self.cached_values = None
-
-    def aggregate(self, inputs, index, dim_size):
-        if self.edge_index is None:
-            raise ValueError("edge_index must be provided to forward before calling aggregate.")
-
-        if self.cached:
-            if self.cached_values is None:
-                self.cached_values = ones(self.edge_index.size(1), dtype=inputs.dtype, device=inputs.device)
-            values = self.cached_values
-        else:
-            values = ones(self.edge_index.size(1), dtype=inputs.dtype, device=inputs.device)
-
-        out = empty(dim_size, inputs.size(1), dtype=inputs.dtype, device=inputs.device)
-        mkl_single_csr_spmm(self.edge_index.to(int32), values, inputs, out)
-        return out

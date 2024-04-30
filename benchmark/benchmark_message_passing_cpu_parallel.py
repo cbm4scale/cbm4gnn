@@ -1,22 +1,21 @@
-from typing import Tuple
-from os.path import exists
 from time import perf_counter
 
-from wget import download
-from scipy.io import loadmat
 from prettytable import PrettyTable
 
-from torch import (arange, bool, cuda, device, Tensor, from_numpy, int64, stack, ones, testing, no_grad, tensor,
-                   zeros_like, float32, rand)
+from torch import (arange, bool, cuda, device, ones, testing, no_grad, tensor, zeros_like, float32, rand)
+from torch_geometric.datasets import SuiteSparseMatrixCollection
 
-from benchmark.message_passing import (NativePytorchScatterAddMessagePassing,
-                                       NativePytorchCOOSparseMatrixMessagePassing,
-                                       NativePytorchCSRSparseMatrixMessagePassing,
-                                       TorchScatterCOOScatterAddMessagePassing,
-                                       TorchScatterGatherCOOSegmentCOO,
-                                       TorchScatterGatherCSRSegmentCSR,
-                                       MKLCSRSparseMatrixMessagePassing,
-                                       )
+from gnns.message_passing import (NativePytorchScatterAddMessagePassing,
+                                  NativePytorchCOOSparseMatrixMessagePassing,
+                                  NativePytorchCSRSparseMatrixMessagePassing,
+                                  TorchScatterCOOScatterAddMessagePassing,
+                                  TorchScatterGatherCOOSegmentCOO,
+                                  TorchScatterGatherCSRSegmentCSR,
+                                  TorchSparseCSRSparseMatrixMessagePassing,
+                                  MKLParallelCSRSparseMatrixMessagePassing,
+                                  CBMParallelMKLCSRSparseMatrixMessagePassing,
+                                  CBMParallelTorchCSRSparseMatrixMessagePassing,
+                                  )
 
 
 def underline(text, flag=True):
@@ -25,23 +24,6 @@ def underline(text, flag=True):
 
 def bold(text, flag=True):
     return f"\033[1m{text}\033[0m" if flag else text
-
-
-def download_from_tamu_sparse_matrix(dataset: Tuple[str, str]) -> None:
-    url = "https://sparse.tamu.edu/mat/{}/{}.mat"
-    group, name = dataset
-    if not exists(f"{name}.mat"):
-        print(f"Downloading {group}/{name}:")
-        download(url.format(group, name))
-        print("")
-
-
-def load_matrix(name: str) -> Tensor:
-    mat = loadmat(f"{name}.mat")["Problem"][0][0][2].tocsr()
-    row = from_numpy(mat.tocoo().row).to(device, int64)
-    col = from_numpy(mat.tocoo().col).to(device, int64)
-    edge_index = stack([row, col], dim=0)
-    return edge_index
 
 
 def time_func(message_passing_cls, edge_index, num_nodes, size, iters=5, warmup=3):
@@ -69,14 +51,13 @@ if __name__ == "__main__":
     device = device("cpu")
 
     datasets = [
-        ("DIMACS10", "citationCiteseer"),
-        ("SNAP", "web-Stanford"),
+        ("SNAP", "ca-AstroPh"),
     ]
-    sizes = [2, 10, 50, 100, 500, 1000, 1500]
+    sizes = [2, 10, 50, 100, 500, 1000, 1500, 2000]
 
-    # Prepare data in edge_index format (COO format)
-    [download_from_tamu_sparse_matrix(dataset) for dataset in datasets]
-    edge_index_dict = {name: load_matrix(name) for _, name in datasets}
+    [SuiteSparseMatrixCollection(root="../data", name=name, group=group) for group, name in datasets]
+    edge_index_dict = {name: SuiteSparseMatrixCollection(root="../data", name=name, group=group).data.edge_index
+                       for group, name in datasets}
 
     message_passing_classes = (NativePytorchScatterAddMessagePassing,
                                NativePytorchCOOSparseMatrixMessagePassing,
@@ -84,7 +65,10 @@ if __name__ == "__main__":
                                TorchScatterCOOScatterAddMessagePassing,
                                TorchScatterGatherCOOSegmentCOO,
                                TorchScatterGatherCSRSegmentCSR,
-                               MKLCSRSparseMatrixMessagePassing,
+                               TorchSparseCSRSparseMatrixMessagePassing,
+                               MKLParallelCSRSparseMatrixMessagePassing,
+                               CBMParallelMKLCSRSparseMatrixMessagePassing,
+                               CBMParallelTorchCSRSparseMatrixMessagePassing,
                                )
     message_passing_classes_names = {NativePytorchScatterAddMessagePassing: "Native Pytorch Scatter Add",
                                      NativePytorchCOOSparseMatrixMessagePassing: "Native Pytorch COO Sparse Matrix",
@@ -92,7 +76,10 @@ if __name__ == "__main__":
                                      TorchScatterCOOScatterAddMessagePassing: "Torch Scatter COO Scatter Add",
                                      TorchScatterGatherCOOSegmentCOO: "Torch Scatter Gather COO Segment COO",
                                      TorchScatterGatherCSRSegmentCSR: "Torch Scatter Gather CSR Segment CSR",
-                                     MKLCSRSparseMatrixMessagePassing: "MKL CSR Sparse Matrix",
+                                     TorchSparseCSRSparseMatrixMessagePassing: "Torch Sparse CSR Sparse Matrix",
+                                     MKLParallelCSRSparseMatrixMessagePassing: "MKL CSR Sparse Matrix",
+                                     CBMParallelMKLCSRSparseMatrixMessagePassing: "CBM MKL CSR Sparse Matrix",
+                                     CBMParallelTorchCSRSparseMatrixMessagePassing: "CBM Native Torch CSR Sparse Matrix",
                                      }
 
     # Correctness check
@@ -106,7 +93,7 @@ if __name__ == "__main__":
         output_per_message_passing[cls.__name__] = message_passing.forward(edge_index, x=x)
 
     outputs_0 = output_per_message_passing[NativePytorchScatterAddMessagePassing.__name__]
-    for cls in message_passing_classes[1:]:
+    for cls in message_passing_classes:
         outputs_i = output_per_message_passing[cls.__name__]
         msg = f"Failed on {cls.__name__},\n{outputs_0} != \n{outputs_i}"
         testing.assert_close(outputs_0, outputs_i, rtol=1e-5, atol=1e-5, msg=msg)
