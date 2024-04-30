@@ -91,6 +91,14 @@ RUN git clone https://github.com/rusty1s/pytorch_scatter.git /opt/pytorch_scatte
 RUN cd /opt/pytorch_scatter && \
     python3.11 setup.py install develop
 
+
+# Clone PyTorch-Sparse repository
+RUN git clone https://github.com/rusty1s/pytorch_sparse.git /opt/pytorch_sparse
+
+# Use the PyTorch version to set the version of torch_sparse dynamically
+RUN cd /opt/pytorch_sparse && \
+    python3.11 setup.py install develop
+
 COPY ./ /workspace
 WORKDIR /workspace
 ENV PYTHONPATH /workspace:$PYTHONPATH
