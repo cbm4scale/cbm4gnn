@@ -6,14 +6,14 @@ from torch_geometric.utils import erdos_renyi_graph, remove_self_loops
 
 from gnns.message_passing import (NativePytorchScatterAddMessagePassing, NativePytorchCOOSparseMatrixMessagePassing,
                                   NativePytorchCSRSparseMatrixMessagePassing, TorchScatterCOOScatterAddMessagePassing,
-                                  TorchScatterGatherCOOSegmentCOO, TorchSparseCSRSparseMatrixMessagePassing,
+                                  TorchScatterGatherCOOSegmentCOOMessagePassing, TorchSparseCSRSparseMatrixMessagePassing,
                                   MKLSequentialCSRSparseMatrixMessagePassing, MKLParallelCSRSparseMatrixMessagePassing,
                                   CBMSequentialMKLCSRSparseMatrixMessagePassing, CBMParallelMKLCSRSparseMatrixMessagePassing,
                                   CBMSequentialTorchCSRSparseMatrixMessagePassing, CBMParallelTorchCSRSparseMatrixMessagePassing)
 
 from gnns.graph_convolutional_network import (NativePytorchScatterAddGCN, NativePytorchCOOSparseMatrixGCN,
                                               NativePytorchCSRSparseMatrixGCN, TorchScatterCOOScatterAddGCN,
-                                              TorchScatterGatherCOOSegmentCOOGCN, TorchSparseCSRSparseMatrixGCN,
+                                              TorchScatterGatherCOOSegmentCOOGCNMessagePassing, TorchSparseCSRSparseMatrixGCN,
                                               MKLSequentialCSRSparseMatrixGCN, MKLParallelCSRSparseMatrixGCN,
                                               CBMSequentialMKLCSRSparseMatrixGCN, CBMParallelMKLCSRSparseMatrixGCN,
                                               CBMSequentialTorchCSRSparseMatrixGCN, CBMParallelTorchCSRSparseMatrixGCN)
@@ -55,7 +55,7 @@ class TestAllNativeMessagePassing(TestCase):
         native_pytorch_coo_mp = NativePytorchCOOSparseMatrixMessagePassing()
         native_pytorch_csr_mp = NativePytorchCSRSparseMatrixMessagePassing()
         torch_scatter_coo_mp = TorchScatterCOOScatterAddMessagePassing()
-        torch_scatter_coo_segment_coo_mp = TorchScatterGatherCOOSegmentCOO()
+        torch_scatter_coo_segment_coo_mp = TorchScatterGatherCOOSegmentCOOMessagePassing()
         torch_sparse_csr_mp = TorchSparseCSRSparseMatrixMessagePassing()
         mkl_sequential_csr_mp = MKLSequentialCSRSparseMatrixMessagePassing()
         mkl_parallel_csr_mp = MKLParallelCSRSparseMatrixMessagePassing()
@@ -125,7 +125,7 @@ class TestGCN(TestCase):
         native_pytorch_coo_gcn = NativePytorchCOOSparseMatrixGCN(in_channels=self.num_features, out_channels=self.out_channels)
         native_pytorch_csr_gcn = NativePytorchCSRSparseMatrixGCN(in_channels=self.num_features, out_channels=self.out_channels)
         torch_scatter_coo_gcn = TorchScatterCOOScatterAddGCN(in_channels=self.num_features, out_channels=self.out_channels)
-        torch_scatter_gather_coo_segment_coo_gcn = TorchScatterGatherCOOSegmentCOOGCN(in_channels=self.num_features, out_channels=self.out_channels)
+        torch_scatter_gather_coo_segment_coo_gcn = TorchScatterGatherCOOSegmentCOOGCNMessagePassing(in_channels=self.num_features, out_channels=self.out_channels)
         torch_sparse_csr_gcn = TorchSparseCSRSparseMatrixGCN(in_channels=self.num_features, out_channels=self.out_channels)
         mkl_sequential_csr_gcn = MKLSequentialCSRSparseMatrixGCN(in_channels=self.num_features, out_channels=self.out_channels)
         mkl_parallel_csr_gcn = MKLParallelCSRSparseMatrixGCN(in_channels=self.num_features, out_channels=self.out_channels)

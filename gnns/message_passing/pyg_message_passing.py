@@ -10,7 +10,7 @@ class TorchScatterCOOScatterAddMessagePassing(MessagePassing):
         return scatter(inputs, index, dim=0, dim_size=dim_size, reduce="add")
 
 
-class TorchScatterGatherCOOSegmentCOO(MessagePassing):
+class TorchScatterGatherCOOSegmentCOOMessagePassing(MessagePassing):
     def aggregate(self, inputs, index, dim_size):
         return segment_coo(inputs, index, dim_size=dim_size, reduce="add")
 
@@ -37,7 +37,7 @@ class TorchSparseCSRSparseMatrixMessagePassing(MessagePassing):
         return a_t @ x
 
 
-class TorchScatterGatherCSRSegmentCSR(MessagePassing):
+class TorchScatterGatherCSRSegmentCSRMessagePassing(MessagePassing):
     def aggregate(self, inputs, index, dim_size):
         index_ptr = cat([tensor([0]), index.bincount().cumsum(0)], dim=0)
         return segment_csr(inputs, index_ptr, reduce="add")

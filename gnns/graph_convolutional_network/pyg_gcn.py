@@ -1,7 +1,7 @@
 from torch_geometric.nn import Linear
 
-from gnns.message_passing import (TorchScatterCOOScatterAddMessagePassing, TorchScatterGatherCOOSegmentCOO,
-                                  TorchSparseCSRSparseMatrixMessagePassing, TorchScatterGatherCSRSegmentCSR, )
+from gnns.message_passing import (TorchScatterCOOScatterAddMessagePassing, TorchScatterGatherCOOSegmentCOOMessagePassing,
+                                  TorchSparseCSRSparseMatrixMessagePassing, TorchScatterGatherCSRSegmentCSRMessagePassing, )
 
 
 class TorchScatterCOOScatterAddGCN(TorchScatterCOOScatterAddMessagePassing):
@@ -21,7 +21,7 @@ class TorchScatterCOOScatterAddGCN(TorchScatterCOOScatterAddMessagePassing):
         return x
 
 
-class TorchScatterGatherCOOSegmentCOOGCN(TorchScatterGatherCOOSegmentCOO):
+class TorchScatterGatherCOOSegmentCOOGCN(TorchScatterGatherCOOSegmentCOOMessagePassing):
     def __init__(self, in_channels, out_channels):
         super(TorchScatterGatherCOOSegmentCOOGCN, self).__init__()
         self.in_channels = in_channels
@@ -55,7 +55,7 @@ class TorchSparseCSRSparseMatrixGCN(TorchSparseCSRSparseMatrixMessagePassing):
         return x
 
 
-class TorchScatterGatherCSRSegmentCSRGCN(TorchScatterGatherCSRSegmentCSR):
+class TorchScatterGatherCSRSegmentCSRGCN(TorchScatterGatherCSRSegmentCSRMessagePassing):
     def __init__(self, in_channels, out_channels):
         super(TorchScatterGatherCSRSegmentCSRGCN, self).__init__()
         self.in_channels = in_channels
