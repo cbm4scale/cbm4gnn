@@ -22,7 +22,7 @@ def __distribute__(params, kwargs):
 
 class MessagePassing(Module):
     def __init__(self, flow: str = "source_to_target", node_dim: int = 0):
-        super(MessagePassing, self).__init__()
+        Module.__init__(self)
 
         assert flow in ["source_to_target", "target_to_source"], f"{flow} is not a valid flow direction."
         assert node_dim >= 0 and isinstance(node_dim, int), "node_dim must be non-negative integer."
