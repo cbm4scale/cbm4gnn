@@ -4,22 +4,8 @@
 # docker run --gpus all --rm -ti --ipc=host --name cbm4gnn_instance cbm4gnn /bin/bash
 
 # Base Image
-ARG BASE_IMAGE=nvidia/cuda:12.1.0-devel-ubuntu22.04
+ARG BASE_IMAGE=pytorch/pytorch:2.2.0-cuda12.1-cudnn8-devel
 FROM ${BASE_IMAGE} as base
-
-# Set non-interactive shell
-ARG DEBIAN_FRONTEND=noninteractive
-
-# Set the working directory
-LABEL com.nvidia.volumes.needed="nvidia_driver"
-
-# Install a supported version of GCC before installing other packages
-RUN apt-get update && apt-get install -y software-properties-common \
-    && add-apt-repository ppa:ubuntu-toolchain-r/test \
-    && apt-get install -y gcc-11 g++-11 \
-    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 \
-    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100 \
-    && gcc --version && g++ --version
 
 # Install common dependencies and utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,17 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wget \
         sudo \
         build-essential \
-        ccache \
-        cmake \
         curl \
         git \
-        libjpeg-dev \
-        libpng-dev \
-        libgomp1 \
-        python3.11 \
-        python3.11-venv \
-        python3.11-dev \
-        python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Intel oneAPI keys and repository (if needed for your specific application)
@@ -55,56 +32,13 @@ ENV LD_LIBRARY_PATH /opt/intel/oneapi/mkl/latest/lib/intel64:$LD_LIBRARY_PATH
 RUN bash -c "source /opt/intel/oneapi/setvars.sh"
 RUN echo "source /opt/intel/oneapi/setvars.sh" >> ~/.bashrc
 
-# Configure ccache
-RUN /usr/sbin/update-ccache-symlinks \
-    && mkdir /opt/ccache && ccache --set-config=cache_dir=/opt/ccache
-ENV CC /usr/bin/gcc
-ENV CXX /usr/bin/g++
-
-# Add a symbolic link for python3.11
-RUN ln -s /usr/bin/python3.11 /usr/bin/python
-# Clone PyTorch repository and checkout to version 2.2
-RUN git clone https://github.com/pytorch/pytorch /opt/pytorch \
-    && cd /opt/pytorch \
-    && git checkout orig/release/2.2
-
-# Update submodules and install dependencies
-RUN cd /opt/pytorch \
-    && git submodule update --init --recursive \
-    && python3.11 -m pip install -r requirements.txt
-
-# This to copy a recent version of the select_compute_arch.cmake file to fix the issue with the CUDA version
-COPY ./select_compute_arch.cmake /opt/pytorch/cmake/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake
-
-# Preparing the PyTorch directory and initiating the build configuration
-RUN cd /opt/pytorch \
-    && python3.11 setup.py develop
-
-# Set the pytorch version
-RUN PYTORCH_VERSION=$(python3.11 -c "import torch; print(torch.__version__)") && \
-    echo "PyTorch version is $PYTORCH_VERSION"
-
-# Clone PyTorch-Scatter repository
-RUN git clone https://github.com/rusty1s/pytorch_scatter.git /opt/pytorch_scatter
-
-# Use the PyTorch version to set the version of torch_scatter dynamically
-RUN cd /opt/pytorch_scatter && \
-    python3.11 setup.py install develop
-
-
-# Clone PyTorch-Sparse repository
-RUN git clone https://github.com/rusty1s/pytorch_sparse.git /opt/pytorch_sparse
-
-# Use the PyTorch version to set the version of torch_sparse dynamically
-RUN cd /opt/pytorch_sparse && \
-    python3.11 setup.py install develop
 
 COPY ./ /workspace
 WORKDIR /workspace
 ENV PYTHONPATH /workspace:$PYTHONPATH
 
 # Install the required Python packages
-RUN python3.11 -m pip install -r requirements_dev.txt
-
+RUN python -m pip install -r requirements_dev.txt
+RUN python -m pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-2.2.0+cu121.html
 # Build the cbm format
-RUN python3.11 setup.py
+RUN python setup.py
