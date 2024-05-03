@@ -3,6 +3,7 @@ from time import perf_counter
 from prettytable import PrettyTable
 
 from torch import arange, bool, device, no_grad, tensor, zeros_like, rand, set_num_threads
+from torch_geometric.nn import GCNConv
 
 set_num_threads(1)
 
@@ -30,7 +31,7 @@ def bold(text, flag=True):
 
 
 def time_func(gcn_cls, edge_index, num_nodes, size, iters=5, warmup=3):
-    gcn_model = gcn_cls(size, 1)
+    gcn_model = gcn_cls(size, 1) if gcn_cls is not GCNConv else gcn_cls(size, 1, normalize=False, bias=False)
     with no_grad():
         for _ in range(warmup):
             x = rand((num_nodes, size), device=device)
@@ -64,6 +65,7 @@ if __name__ == "__main__":
                    TorchScatterGatherCOOSegmentCOOGCN,
                    TorchScatterGatherCSRSegmentCSRGCN,
                    TorchSparseCSRSparseMatrixGCN,
+                   GCNConv,
                    MKLSequentialCSRSparseMatrixGCN,
                    CBMSequentialMKLCSRSparseMatrixGCN,
                    CBMSequentialTorchCSRSparseMatrixGCN,
@@ -75,6 +77,7 @@ if __name__ == "__main__":
                          TorchScatterGatherCOOSegmentCOOGCN: "Torch Scatter Gather COO Segment COO",
                          TorchScatterGatherCSRSegmentCSRGCN: "Torch Scatter Gather CSR Segment CSR",
                          TorchSparseCSRSparseMatrixGCN: "Torch Sparse CSR Sparse",
+                         GCNConv: "Torch Geometric GCN Conv",
                          MKLSequentialCSRSparseMatrixGCN: "MKL CSR Sparse",
                          CBMSequentialMKLCSRSparseMatrixGCN: "CBM MKL CSR Sparse",
                          CBMSequentialTorchCSRSparseMatrixGCN: "CBM Native Torch CSR Sparse",

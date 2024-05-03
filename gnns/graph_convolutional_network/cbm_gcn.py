@@ -12,15 +12,15 @@ class CBMSequentialMKLCSRSparseMatrixGCN(CBMSequentialMKLCSRSparseMatrixMessageP
         super(CBMSequentialMKLCSRSparseMatrixGCN, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.lin = Linear(in_channels, out_channels, bias=True, weight_initializer='glorot')
+        self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
         self.reset_parameters()
 
     def reset_parameters(self):
         self.lin.reset_parameters()
 
     def forward(self, x, edge_index):
-        x = super().forward(edge_index, x=x)
         x = self.lin(x)
+        x = super().forward(edge_index, x=x)
         return x
 
 
@@ -29,15 +29,15 @@ class CBMParallelMKLCSRSparseMatrixGCN(CBMParallelMKLCSRSparseMatrixMessagePassi
         super(CBMParallelMKLCSRSparseMatrixGCN, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.lin = Linear(in_channels, out_channels, bias=True, weight_initializer='glorot')
+        self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
         self.reset_parameters()
 
     def reset_parameters(self):
         self.lin.reset_parameters()
 
     def forward(self, x, edge_index):
-        x = super().forward(edge_index, x=x)
         x = self.lin(x)
+        x = super().forward(edge_index, x=x)
         return x
 
 
@@ -46,15 +46,15 @@ class CBMSequentialTorchCSRSparseMatrixGCN(CBMSequentialTorchCSRSparseMatrixMess
         super(CBMSequentialTorchCSRSparseMatrixGCN, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.lin = Linear(in_channels, out_channels, bias=True, weight_initializer='glorot')
+        self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
         self.reset_parameters()
 
     def reset_parameters(self):
         self.lin.reset_parameters()
 
     def forward(self, x, edge_index):
-        x = super().forward(edge_index, x=x)
         x = self.lin(x)
+        x = super().forward(edge_index, x=x)
         return x
 
 
@@ -63,13 +63,13 @@ class CBMParallelTorchCSRSparseMatrixGCN(CBMParallelTorchCSRSparseMatrixMessageP
         super(CBMParallelTorchCSRSparseMatrixGCN, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.lin = Linear(in_channels, out_channels, bias=True, weight_initializer='glorot')
+        self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
         self.reset_parameters()
 
     def reset_parameters(self):
         self.lin.reset_parameters()
 
     def forward(self, x, edge_index):
-        x = super().forward(edge_index, x=x)
         x = self.lin(x)
+        x = super().forward(edge_index, x=x)
         return x
