@@ -167,6 +167,9 @@ def timing(dataset):
     header = [""] + [f"{size:>5}" for size in sizes]
     table.field_names = header
     methods = ["torch.spmm", "mkl_csr_spmm", "cbm_mkl_csr_spmm", "cbm_torch_csr_matmul"]
+    cbm_mkl_spmm_time_list = [f"{t_1} ({(t_2 / t_1):.1f}x)" for t_1, t_2 in zip(cbm_mkl_spmm_time_list, mkl_spmm_time_list)]
+    cbm_torch_csr_matmul_time_list = [f"{t_1} ({(t_2 / t_1):.1f}x)" for t_1, t_2 in zip(cbm_torch_csr_matmul_time_list, torch_spmm_time_list)]
+
     time_data = [torch_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list, cbm_torch_csr_matmul_time_list]
     for method, times, wins in zip(methods, time_data, winner):
         row = [method, ] + [f"{underline(t, w)}" for t, w in zip(times, wins)]
