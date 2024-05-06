@@ -79,7 +79,7 @@ class MessagePassing(Module):
         raise NotImplementedError("Not implemented, since it is a base class.")
 
     def __repr__(self):
-        return "{}(dtype={})".format(self.__class__.__name__, self.dtype)
+        return "{}()".format(self.__class__.__name__)
 
     def message(self, x_j, edge_weight=None):
         return x_j if edge_weight is None else edge_weight.view(-1, 1) * x_j
