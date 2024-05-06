@@ -13,12 +13,13 @@ from cbm import cbm_mkl_cpp as cbm_
 from cbm.utilization import check_edge_index
 
 short_rows = [
-    ("SNAP", "ca-HepTh"),
     ("SNAP", "ca-HepPh"),
     ("SNAP", "cit-HepTh"),
     ("SNAP", "ca-AstroPh"),
     ("SNAP", "web-Stanford"),
     ("SNAP", "web-NotreDame"),
+    ("Planetoid", "Cora"),
+    ("Planetoid", "PubMed"),
 ]
 
 
@@ -106,7 +107,7 @@ def timing(dataset):
     dim_size = rowptr.size(0) - 1
     avg_row_len = edge_index.size(1) / dim_size
 
-    torch_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list, cbm_torch_csr_matmul_time_list = [], [], [], []
+    torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list, cbm_torch_csr_spmm_time_list = [], [], [], []
 
     for size in sizes:
         x = torch.randn((mat.shape[0], size))
@@ -141,8 +142,8 @@ def timing(dataset):
             c.omp_mkl_csr_spmm_update(x, y3)
         cbm_mkl_spmm_time = (time.perf_counter() - start_time)
 
-        torch_spmm_time_list += [torch_spmm_time]
-        cbm_torch_csr_matmul_time_list += [cbm_torch_csr_matmul_time]
+        torch_csr_spmm_time_list += [torch_spmm_time]
+        cbm_torch_csr_spmm_time_list += [cbm_torch_csr_matmul_time]
         mkl_spmm_time_list += [mkl_spmm_time]
         cbm_mkl_spmm_time_list += [cbm_mkl_spmm_time]
 
@@ -153,21 +154,28 @@ def timing(dataset):
 
     del rowptr, mat, values, edge_index
 
-    ts = torch.tensor([torch_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list, cbm_torch_csr_matmul_time_list])
-    winner = torch.zeros_like(ts, dtype=torch.bool)
-    winner[ts.argmin(dim=0), torch.arange(len(sizes))] = 1
-    winner = winner.tolist()
+    torch_time = torch.tensor([torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list])
+    mkl_time = torch.tensor([mkl_spmm_time_list, cbm_mkl_spmm_time_list])
+
+    torch_winner = torch.zeros_like(torch_time, dtype=torch.bool)
+    mkl_winner = torch.zeros_like(mkl_time, dtype=torch.bool)
+
+    torch_winner[torch_time.argmin(dim=0), torch.arange(len(sizes))] = 1
+    mkl_winner[mkl_time.argmin(dim=0), torch.arange(len(sizes))] = 1
+
+    winner = torch.cat([torch_winner, mkl_winner], dim=0).tolist()
 
     table = PrettyTable()
     name = f"{group}/{name}"
     table.title = f"{name} (avg row length: {avg_row_len:.2f})"
     header = [""] + [f"{size:>5}" for size in sizes]
     table.field_names = header
-    methods = ["torch.spmm", "mkl_csr_spmm", "cbm_mkl_csr_spmm", "cbm_torch_csr_matmul"]
-    cbm_mkl_spmm_time_list = [f"{t_1} ({(t_2 / t_1):.1f}x)" for t_1, t_2 in zip(cbm_mkl_spmm_time_list, mkl_spmm_time_list)]
-    cbm_torch_csr_matmul_time_list = [f"{t_1} ({(t_2 / t_1):.1f}x)" for t_1, t_2 in zip(cbm_torch_csr_matmul_time_list, torch_spmm_time_list)]
+    methods = ["torch_csr_spmm", "cbm_torch_csr_spmm", "mkl_csr_spmm", "cbm_mkl_csr_spmm"]
 
-    time_data = [torch_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list, cbm_torch_csr_matmul_time_list]
+    cbm_torch_csr_spmm_time_list = [f"{t_1} ({((t_2 - t_1) / t_2) * 100:.1f}%)" for t_1, t_2 in zip(cbm_torch_csr_spmm_time_list, torch_csr_spmm_time_list)]
+    cbm_mkl_spmm_time_list = [f"{t_1} ({((t_2 - t_1) / t_2) * 100:.1f}%)" for t_1, t_2 in zip(cbm_mkl_spmm_time_list, mkl_spmm_time_list)]
+
+    time_data = [torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list]
     for method, times, wins in zip(methods, time_data, winner):
         row = [method, ] + [f"{underline(t, w)}" for t, w in zip(times, wins)]
         table.add_row(row)
