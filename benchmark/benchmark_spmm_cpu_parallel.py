@@ -113,34 +113,38 @@ def timing(dataset):
         x = torch.randn((mat.shape[0], size))
         x = x.squeeze(-1) if size == 1 else x
 
+        y0 = a @ x
         start_time = time.perf_counter()
         for _ in range(iters):
             y0 = a @ x
-        torch_spmm_time = (time.perf_counter() - start_time)
+        torch_spmm_time = (time.perf_counter() - start_time) / iters
 
         time.sleep(1)
 
         y = torch.empty(dim_size, size, dtype=x.dtype)
+        y1 = c.omp_torch_csr_matmul(x)
         start_time = time.perf_counter()
         for _ in range(iters):
             y1 = c.omp_torch_csr_matmul(x)
-        cbm_torch_csr_matmul_time = (time.perf_counter() - start_time)
+        cbm_torch_csr_matmul_time = (time.perf_counter() - start_time) / iters
 
         time.sleep(1)
 
         y2 = torch.empty(dim_size, size, dtype=x.dtype)
+        omp_mkl_csr_spmm(a, x, y2)
         start_time = time.perf_counter()
         for _ in range(iters):
             omp_mkl_csr_spmm(a, x, y2)
-        mkl_spmm_time = (time.perf_counter() - start_time)
+        mkl_spmm_time = (time.perf_counter() - start_time) / iters
 
         time.sleep(1)
 
         y3 = torch.empty(dim_size, size, dtype=x.dtype)
+        c.omp_mkl_csr_spmm_update(x, y3)
         start_time = time.perf_counter()
         for _ in range(iters):
             c.omp_mkl_csr_spmm_update(x, y3)
-        cbm_mkl_spmm_time = (time.perf_counter() - start_time)
+        cbm_mkl_spmm_time = (time.perf_counter() - start_time) / iters
 
         torch_csr_spmm_time_list += [torch_spmm_time]
         cbm_torch_csr_spmm_time_list += [cbm_torch_csr_matmul_time]
@@ -152,7 +156,7 @@ def timing(dataset):
         torch.testing.assert_close(y0, y3, atol=1e-2, rtol=1e-2)
         del x
 
-    del rowptr, mat, values, edge_index
+    del rowptr, mat, values
 
     torch_time = torch.tensor([torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list])
     mkl_time = torch.tensor([mkl_spmm_time_list, cbm_mkl_spmm_time_list])
@@ -166,8 +170,7 @@ def timing(dataset):
     winner = torch.cat([torch_winner, mkl_winner], dim=0).tolist()
 
     table = PrettyTable()
-    name = f"{group}/{name}"
-    table.title = f"{name} (avg row length: {avg_row_len:.2f})"
+    table.title = f"{group}/{name} (avg row length: {avg_row_len:.2f}, num_nodes: {a.size(0)}, num_edges: {edge_index.size(1)})"
     header = [""] + [f"{size:>5}" for size in sizes]
     table.field_names = header
     methods = ["torch_csr_spmm", "cbm_torch_csr_spmm", "mkl_csr_spmm", "cbm_mkl_csr_spmm"]
@@ -177,17 +180,15 @@ def timing(dataset):
 
     time_data = [torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list]
     for method, times, wins in zip(methods, time_data, winner):
-        row = [method, ] + [f"{underline(t, w)}" for t, w in zip(times, wins)]
+        row = [method, ] + [f"{underline(bold(t, w), w)}" for t, w in zip(times, wins)]
         table.add_row(row)
     print(table)
 
 
 if __name__ == "__main__":
-    iters = 10
-    sizes = [50, 100, 500, 1000, 2000, 4000]
+    iters = 50
+    sizes = [50, 100, 500, 1000, 2000]
 
-    for _ in range(10):  # Warmup.
-        torch.randn(100, 100).sum()
     for dataset in itertools.chain(short_rows):
         group, name = dataset
         if group == "Planetoid":
