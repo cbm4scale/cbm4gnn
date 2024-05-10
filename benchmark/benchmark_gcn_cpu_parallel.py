@@ -1,17 +1,16 @@
-from time import perf_counter
+from time import perf_counter, sleep
 
 from prettytable import PrettyTable
 
 from torch import arange, bool, device, no_grad, tensor, zeros_like, rand
-from torch_geometric.datasets import SuiteSparseMatrixCollection
+from torch.nn import Module
+from torch_geometric.nn import GCNConv
+
+from torch_geometric.datasets import SuiteSparseMatrixCollection, Planetoid, Amazon
 
 from gnns.graph_convolutional_network import (NativePytorchScatterAddGCN,
                                               NativePytorchCOOSparseMatrixGCN,
                                               NativePytorchCSRSparseMatrixGCN,
-                                              TorchScatterCOOScatterAddGCN,
-                                              TorchScatterGatherCOOSegmentCOOGCN,
-                                              TorchScatterGatherCSRSegmentCSRGCN,
-                                              TorchSparseCSRSparseMatrixGCN,
                                               MKLParallelCSRSparseMatrixGCN,
                                               CBMParallelMKLCSRSparseMatrixGCN,
                                               CBMParallelTorchCSRSparseMatrixGCN,
@@ -26,15 +25,42 @@ def bold(text, flag=True):
     return f"\033[1m{text}\033[0m" if flag else text
 
 
-def time_func(gcn_cls, edge_index, num_nodes, size, iters=5, warmup=3):
-    gcn_model = gcn_cls(size, 1)
+def create_layer(cls, in_channels, out_channels):
+    if cls is GCNConv:
+        return cls(in_channels, out_channels, normalize=False, bias=False)
+    return cls(in_channels, out_channels)
+
+
+def create_model(cls, in_channels, hidden_channels, out_channels, num_layers):
+    assert num_layers >= 2, "Number of layers must be at least 2"
+
+    class Model(Module):
+        def __init__(self):
+            super(Model, self).__init__()
+            self.first_layer = create_layer(cls, in_channels, hidden_channels)
+            self.layers = [create_layer(cls, hidden_channels, hidden_channels) for _ in range(num_layers - 2)]
+            self.last_layer = create_layer(cls, hidden_channels, out_channels)
+
+        def forward(self, x, edge_index):
+            x = self.first_layer(x, edge_index)
+            x = x.relu()
+            for layer in self.layers:
+                x = layer(x, edge_index)
+                x = x.relu()
+            x = self.last_layer(x, edge_index)
+            return x
+
+    return Model()
+
+
+def time_func(gcn_cls, edge_index, x, hidden_size, num_layers=2, iters=100, warmup=3):
+    in_channels = x.size(1)
+    gcn_model = create_model(gcn_cls, in_channels, hidden_size, hidden_size, num_layers)
     with no_grad():
         for _ in range(warmup):
-            x = rand((num_nodes, size), device=device)
             gcn_model(x=x, edge_index=edge_index)
         t_total = 0
         for _ in range(iters):
-            x = rand((num_nodes, size), device=device)
             t_start = perf_counter()
             gcn_model(x=x, edge_index=edge_index)
             t_total += (perf_counter() - t_start)
@@ -44,23 +70,34 @@ def time_func(gcn_cls, edge_index, num_nodes, size, iters=5, warmup=3):
 if __name__ == "__main__":
     # MKL doesn't support cuda so don't run this on cuda to avoid errors and have a fair comparison
     device = device("cpu")
+    number_of_layers = 2
 
     datasets = [
         ("SNAP", "ca-AstroPh"),
     ]
-    sizes = [2, 10, 50, 100, 500, 1000, 1500, 2000]
+    hidden_channels = [16, 32, 64, 128, 256, 512]
 
-    [SuiteSparseMatrixCollection(root="../data", name=name, group=group) for group, name in datasets]
-    edge_index_dict = {name: SuiteSparseMatrixCollection(root="../data", name=name, group=group).data.edge_index
-                       for group, name in datasets}
+    [Planetoid(root="../data", name=name)
+     if group == "Planetoid" else
+     Amazon(root="../data", name=name)
+     if group == "Amazon" else
+     SuiteSparseMatrixCollection(root="../data", name=name, group=group)
+     for group, name in datasets]
+
+    data_dict = {
+        name:
+            Planetoid(root="../data", name=name).data
+            if group == "Planetoid" else
+            Amazon(root="../data", name=name).data
+            if group == "Amazon" else
+            SuiteSparseMatrixCollection(root="../data", name=name, group=group).data
+        for group, name in datasets
+    }
 
     gcn_classes = (NativePytorchScatterAddGCN,
                    NativePytorchCOOSparseMatrixGCN,
                    NativePytorchCSRSparseMatrixGCN,
-                   TorchScatterCOOScatterAddGCN,
-                   TorchScatterGatherCOOSegmentCOOGCN,
-                   TorchScatterGatherCSRSegmentCSRGCN,
-                   TorchSparseCSRSparseMatrixGCN,
+                   GCNConv,
                    MKLParallelCSRSparseMatrixGCN,
                    CBMParallelMKLCSRSparseMatrixGCN,
                    CBMParallelTorchCSRSparseMatrixGCN,
@@ -68,37 +105,32 @@ if __name__ == "__main__":
     gcn_classes_names = {NativePytorchScatterAddGCN: "Native Pytorch Scatter Add",
                          NativePytorchCOOSparseMatrixGCN: "Native Pytorch COO Sparse",
                          NativePytorchCSRSparseMatrixGCN: "Native Pytorch CSR Sparse",
-                         TorchScatterCOOScatterAddGCN: "Torch Scatter COO Scatter Add",
-                         TorchScatterGatherCOOSegmentCOOGCN: "Torch Scatter Gather COO Segment COO",
-                         TorchScatterGatherCSRSegmentCSRGCN: "Torch Scatter Gather CSR Segment CSR",
-                         TorchSparseCSRSparseMatrixGCN: "Torch Sparse CSR Sparse",
+                         GCNConv: "Torch Geometric GCN Conv",
                          MKLParallelCSRSparseMatrixGCN: "MKL CSR Sparse",
                          CBMParallelMKLCSRSparseMatrixGCN: "CBM MKL CSR Sparse",
                          CBMParallelTorchCSRSparseMatrixGCN: "CBM Native Torch CSR Sparse",
                          }
 
-    # Correctness check
-    edge_index = [*edge_index_dict.values()][0]
-    num_nodes = edge_index.max() + 1
-    edge_index = edge_index.to(device)
-
-    # Timing
-    for name, edge_index in edge_index_dict.items():
-        num_nodes = edge_index.max() + 1
+    for name_i, data_i in data_dict.items():
+        edge_index, x = data_i.edge_index, data_i.x
+        if x is None:
+            x = rand(data_i.num_nodes, 1)
+        in_size = x.size(1)
         ts = [[] for _ in range(len(gcn_classes))]
-        for size in sizes:
+        for hidden_channel in hidden_channels:
             for i, cls in enumerate(gcn_classes):
-                ts[i] += [time_func(cls, edge_index, num_nodes, size), ]
+                sleep(0.5)
+                ts[i] += [time_func(cls, edge_index, x, hidden_channel, number_of_layers), ]
 
         ts = tensor(ts)
         winner = zeros_like(ts, dtype=bool)
-        winner[ts.argmin(dim=0), arange(len(sizes))] = 1
+        winner[ts.argmin(dim=0), arange(len(hidden_channels))] = 1
         winner = winner.tolist()
 
         table = PrettyTable(align="l")
-        table.field_names = [bold("SIZES"), ] + [bold(f"{size}") for size in sizes]
+        table.field_names = [bold(f"Input Size: {in_size} / Embedding Sizes"), ] + [bold(f"{hidden_channel}") for hidden_channel in hidden_channels]
         for i, cls in enumerate(gcn_classes):
             table.add_row([bold(gcn_classes_names[cls])] +
                           [underline(f"{t:.5f}", f) for t, f in zip(ts[i], winner[i])])
-        print(f"{bold(name.upper())}:")
+        print(f"{bold(name_i.upper())}:")
         print(table)
