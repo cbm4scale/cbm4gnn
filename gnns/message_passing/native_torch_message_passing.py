@@ -1,13 +1,32 @@
-from torch import zeros, sparse_coo_tensor, ones
+from torch import zeros, sparse_coo_tensor, ones, float32
 
+from gnns.utilization import normalize_edge_index, normalize_torch_adj
 from gnns.message_passing.base_message_passing import MessagePassing
 
 
 class NativePytorchScatterAddMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
         super(NativePytorchScatterAddMessagePassing, self).__init__(flow, node_dim)
+        self.normalize = normalize
         self.cached = cached
-        self.cached_index = None
+        self.cached_index = None  # (index)
+        self.cached_edge = [None, None]  # (edge_index, edge_weight)
+
+    def forward(self, edge_index, size=None, **kwargs):
+        if self.cached:
+            if self.cached_edge[0] is None:
+                self.cached_edge[0] = edge_index
+                if self.normalize:
+                    self.cached_edge[1] = normalize_edge_index(edge_index)
+                else:
+                    self.cached_edge[1] = ones(edge_index.size(1), dtype=float32, device=edge_index.device)
+            edge_index, edge_weight = self.cached_edge
+        else:
+            if self.normalize:
+                edge_weight = normalize_edge_index(edge_index)
+            else:
+                edge_weight = ones(edge_index.size(1), dtype=float32, device=edge_index.device)
+        return super().forward(edge_index, size=size, edge_weight=edge_weight, **kwargs)
 
     def aggregate(self, inputs, index, dim_size):
         num_features = inputs.shape[1]
@@ -24,29 +43,9 @@ class NativePytorchScatterAddMessagePassing(MessagePassing):
 
 
 class NativePytorchCOOSparseMatrixMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
         super(NativePytorchCOOSparseMatrixMessagePassing, self).__init__(flow, node_dim)
-        self.cached = cached
-        self.cached_a_t = None
-
-    def forward(self, edge_index, size=None, **kwargs):
-        if "x" in kwargs:
-            x = kwargs["x"]
-            size = size if size is not None else (x.size(0), x.size(0))
-        else:
-            raise ValueError("x must be in kwargs")
-        if self.cached:
-            if self.cached_a_t is None:
-                self.cached_a_t = sparse_coo_tensor(edge_index, ones(edge_index.size(1), dtype=x.dtype), size=size, device=x.device).t()
-            a_t = self.cached_a_t
-        else:
-            a_t = sparse_coo_tensor(edge_index, ones(edge_index.size(1), dtype=x.dtype), size=size, device=x.device).t()
-        return a_t @ x
-
-
-class NativePytorchCSRSparseMatrixMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, cached: bool = True):
-        super(NativePytorchCSRSparseMatrixMessagePassing, self).__init__(flow, node_dim)
+        self.normalize = normalize
         self.cached = cached
         self.cached_a_t = None
 
@@ -59,9 +58,35 @@ class NativePytorchCSRSparseMatrixMessagePassing(MessagePassing):
         if self.cached:
             if self.cached_a_t is None:
                 a = sparse_coo_tensor(edge_index, ones(edge_index.size(1), dtype=x.dtype), size=size, device=x.device)
+                a = normalize_torch_adj(a) if self.normalize else a
+                self.cached_a_t = a.t()
+            a_t = self.cached_a_t
+        else:
+            a = sparse_coo_tensor(edge_index, ones(edge_index.size(1), dtype=x.dtype), size=size, device=x.device)
+            a_t = normalize_torch_adj(a).t() if self.normalize else a.t()
+        return a_t @ x
+
+
+class NativePytorchCSRSparseMatrixMessagePassing(MessagePassing):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
+        super(NativePytorchCSRSparseMatrixMessagePassing, self).__init__(flow, node_dim)
+        self.normalize = normalize
+        self.cached = cached
+        self.cached_a_t = None
+
+    def forward(self, edge_index, size=None, **kwargs):
+        if "x" in kwargs:
+            x = kwargs["x"]
+            size = size if size is not None else (x.size(0), x.size(0))
+        else:
+            raise ValueError("x must be in kwargs")
+        if self.cached:
+            if self.cached_a_t is None:
+                a = sparse_coo_tensor(edge_index, ones(edge_index.size(1), dtype=x.dtype), size=size, device=x.device)
+                a = normalize_torch_adj(a) if self.normalize else a
                 self.cached_a_t = a.to_sparse_csr().t()
             a_t = self.cached_a_t
         else:
             a = sparse_coo_tensor(edge_index, ones(edge_index.size(1), dtype=x.dtype), size=size, device=x.device)
-            a_t = a.to_sparse_csr().t()
+            a_t = normalize_torch_adj(a.to_sparse_csr()).t() if self.normalize else a.to_sparse_csr().t()
         return a_t @ x

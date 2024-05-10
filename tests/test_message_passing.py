@@ -100,7 +100,7 @@ class TestGCN(TestCase):
 
     def test_native_pytorch_against_native_pyg(self):
         native_pytorch_gcn = NativePytorchScatterAddGCN(in_channels=self.num_features, out_channels=self.out_channels)
-        native_pyg_gcn_layer = GCNConv(in_channels=self.num_features, out_channels=self.out_channels, normalize=False, bias=False)
+        native_pyg_gcn_layer = GCNConv(in_channels=self.num_features, out_channels=self.out_channels, add_self_loops=False, bias=False)
 
         native_pyg_gcn_layer.lin.weight.data = native_pytorch_gcn.lin.weight.data
         # native_pyg_gcn_layer.bias.data = native_pytorch_gcn.lin.bias.data
