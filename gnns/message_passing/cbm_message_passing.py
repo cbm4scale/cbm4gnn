@@ -21,17 +21,17 @@ class CBMSequentialMKLCSRSparseMatrixMessagePassing(MessagePassing):
         if self.cached:
             if self.cached_a_t is None:
                 edge_index_t = stack([edge_index[1], edge_index[0]], dim=0).to(int32)
-                self.cached_a_t = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=x.dtype), alpha=self.alpha)
+                self.cached_a_t = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=x.dtype), normalized=True, alpha=self.alpha)
             if self.cached_empty_tensor is None:
                 self.cached_empty_tensor = empty(size=(edge_index.max().item() + 1, x.size(1),), dtype=x.dtype, device=x.device)
             a_t = self.cached_a_t
             out = self.cached_empty_tensor
         else:
             edge_index_t = stack([edge_index[1], edge_index[0]], dim=0).to(int32)
-            a_t = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=x.dtype), alpha=self.alpha)
+            a_t = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=x.dtype), normalized=True, alpha=self.alpha)
             out = empty(size=(edge_index.max().item() + 1, x.size(1),), dtype=x.dtype, device=x.device)
 
-        a_t.seq_mkl_csr_spmm_update(x, out)
+        a_t.seq_mkl_csr_fused_spmm_update(x, out)
         return out
 
 
@@ -45,17 +45,17 @@ class CBMParallelMKLCSRSparseMatrixMessagePassing(CBMSequentialMKLCSRSparseMatri
         if self.cached:
             if self.cached_a_t is None:
                 edge_index_t = stack([edge_index[1], edge_index[0]], dim=0).to(int32)
-                self.cached_a_t = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=x.dtype), alpha=self.alpha)
+                self.cached_a_t = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=x.dtype), normalized=True, alpha=self.alpha)
             if self.cached_empty_tensor is None:
                 self.cached_empty_tensor = empty(size=(edge_index.max().item() + 1, x.size(1),), dtype=x.dtype, device=x.device)
             a_t = self.cached_a_t
             out = self.cached_empty_tensor
         else:
             edge_index_t = stack([edge_index[1], edge_index[0]], dim=0).to(int32)
-            a_t = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=x.dtype), alpha=self.alpha)
+            a_t = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=x.dtype), normalized=True, alpha=self.alpha)
             out = empty(size=(edge_index.max().item() + 1, x.size(1),), dtype=x.dtype, device=x.device)
 
-        a_t.omp_mkl_csr_spmm_update(x, out)
+        a_t.omp_mkl_csr_fused_spmm_update(x, out)
         return out
 
 
