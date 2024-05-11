@@ -2,12 +2,14 @@ from time import perf_counter, sleep
 
 from prettytable import PrettyTable
 
-from torch import arange, bool, device, no_grad, tensor, zeros_like, rand
+from torch import arange, bool, device, float32, no_grad, tensor, zeros_like, rand, stack, ones, int32
 from torch.nn import Module
 from torch_geometric.nn import GCNConv
 
 from torch_geometric.datasets import SuiteSparseMatrixCollection, Planetoid, Amazon
 
+from cbm.cbm import cbm_matrix
+from gnns.utilization import add_self_loops
 from gnns.graph_convolutional_network import (NativePytorchScatterAddGCN,
                                               NativePytorchCOOSparseMatrixGCN,
                                               NativePytorchCSRSparseMatrixGCN,
@@ -15,7 +17,6 @@ from gnns.graph_convolutional_network import (NativePytorchScatterAddGCN,
                                               CBMParallelMKLCSRSparseMatrixGCN,
                                               CBMParallelTorchCSRSparseMatrixGCN,
                                               )
-
 
 def underline(text, flag=True):
     return f"\033[4m{text}\033[0m" if flag else text
@@ -27,7 +28,12 @@ def bold(text, flag=True):
 
 def create_layer(cls, in_channels, out_channels):
     if cls is GCNConv:
-        return cls(in_channels, out_channels, normalize=False, bias=False)
+        return cls(in_channels, out_channels, normalize=True, add_self_loops=False, bias=False)
+    if cls in (CBMParallelMKLCSRSparseMatrixGCN, CBMParallelTorchCSRSparseMatrixGCN):
+        layer = cls(in_channels, out_channels)
+        # store it in the layer to avoid creating it multiple times for each layer
+        layer.cached_a_t = c
+        return layer
     return cls(in_channels, out_channels)
 
 
@@ -53,7 +59,7 @@ def create_model(cls, in_channels, hidden_channels, out_channels, num_layers):
     return Model()
 
 
-def time_func(gcn_cls, edge_index, x, hidden_size, num_layers=2, iters=100, warmup=3):
+def time_func(gcn_cls, edge_index, x, hidden_size, num_layers=2, iters=10, warmup=3):
     in_channels = x.size(1)
     gcn_model = create_model(gcn_cls, in_channels, hidden_size, hidden_size, num_layers)
     with no_grad():
@@ -75,7 +81,7 @@ if __name__ == "__main__":
     datasets = [
         ("SNAP", "ca-AstroPh"),
     ]
-    hidden_channels = [16, 32, 64, 128, 256, 512]
+    hidden_channels = [128, 256, 512]
 
     [Planetoid(root="../data", name=name)
      if group == "Planetoid" else
@@ -113,6 +119,10 @@ if __name__ == "__main__":
 
     for name_i, data_i in data_dict.items():
         edge_index, x = data_i.edge_index, data_i.x
+        edge_index = add_self_loops(edge_index)
+        edge_index_t = stack([edge_index[1], edge_index[0]], dim=0).to(int32)
+        c = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=float32), normalized=True, alpha=3)
+
         if x is None:
             x = rand(data_i.num_nodes, 1)
         in_size = x.size(1)
