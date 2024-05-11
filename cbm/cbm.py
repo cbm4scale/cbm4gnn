@@ -180,12 +180,10 @@ class cbm_matrix:
             self.mst_col.to(torch.int32),
             mul_ptr, y)
 
-    def seq_mkl_csr_fused_update(self, x, y):
+    def seq_mkl_csr_fused_update(self, y):
         mul_ptr = self.col_multiplier.to(torch.float32)
         cbm_.seq_s_fused_update_csr_int32(
-            row_ptr_s, row_ptr_e, col_ptr, 
-            val_ptr, x, 
-            self.mst_row.to(torch.int32), 
+            self.mst_row.to(torch.int32),
             self.mst_col.to(torch.int32),
             mul_ptr, y)
 
@@ -243,11 +241,9 @@ class cbm_matrix:
             mul_ptr, y)
 
 
-    def omp_mkl_csr_fused_update(self, x, y):
+    def omp_mkl_csr_fused_update(self, y):
         mul_ptr = self.col_multiplier.to(torch.float32)
         cbm_.omp_s_fused_update_csr_int32(
-            row_ptr_s, row_ptr_e, col_ptr, 
-            val_ptr, x, 
             self.mst_row.to(torch.int32), 
             self.mst_col.to(torch.int32),
             mul_ptr, y)
@@ -266,4 +262,14 @@ class cbm_matrix:
         # assumes deltas is stored as csr
         y = self.deltas @ x
         self.omp_mkl_csr_update(y)
+        return y
+
+    def seq_torch_csr_fused_matmul(self, x):
+        y = self.deltas @ x
+        self.seq_mkl_csr_fused_update(y)
+        return y
+
+    def omp_torch_csr_fused_matmul(self, x):
+        y = self.deltas @ x
+        self.omp_mkl_csr_fused_update(y)
         return y
