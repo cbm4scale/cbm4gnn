@@ -1,18 +1,21 @@
 import time
-import itertools
+from datetime import datetime
+from os import makedirs
+from os.path import exists
 
 import torch
 from prettytable import PrettyTable
 from scipy.sparse import csr_matrix
 
-from torch_geometric.datasets import Planetoid, SuiteSparseMatrixCollection
-
-
 from cbm.cbm import cbm_matrix
 from cbm import cbm_mkl_cpp as cbm_
 from cbm.utilization import check_edge_index
+from benchmark.utilization import underline, bold, download_and_return_datasets_as_dict, calculate_compression_ratio
+from logger import setup_logger
 
-short_rows = [
+iters = 50
+sizes = [50, 100, 500, 1000, 2000]
+datasets = [
     ("SNAP", "ca-HepPh"),
     ("SNAP", "cit-HepTh"),
     ("SNAP", "ca-AstroPh"),
@@ -20,6 +23,11 @@ short_rows = [
     ("SNAP", "web-NotreDame"),
     ("Planetoid", "Cora"),
     ("Planetoid", "PubMed"),
+    ("DIMACS10", "coPapersDBLP"),
+    ("DIMACS10", "coPapersCiteseer"),
+    ("TKK", "s4dkt3m2"),
+    ("TKK", "g3rmt3m3"),
+    ("FIDAP", "ex26"),
 ]
 
 
@@ -31,33 +39,8 @@ def omp_mkl_csr_spmm(a, x, y):
     cbm_.omp_s_spmm_csr_int32(row_ptr_s, row_ptr_e, col_ptr, val_ptr, x, y)
 
 
-def read_suite_sparse_dataset(dataset):
-    group, name = dataset
-    edge_index = SuiteSparseMatrixCollection(root="../data", name=name, group=group).data.edge_index
-    return edge_index
-
-
-def read_planetoid_dataset(name):
-    edge_index = Planetoid(root="./", name=name).data.edge_index
-    return edge_index
-
-
-def underline(text, flag=True):
-    return f"\033[4m{text}\033[0m" if flag else text
-
-
-def bold(text, flag=True):
-    return f"\033[1m{text}\033[0m" if flag else text
-
-
 @torch.no_grad()
-def correctness(dataset):
-    group, name = dataset
-    if group == "Planetoid":
-        edge_index = read_planetoid_dataset(name)
-    else:
-        edge_index = read_suite_sparse_dataset(dataset)
-
+def correctness(edge_index):
     mat = csr_matrix((torch.ones(edge_index.size(1)), edge_index), shape=(edge_index.max() + 1, edge_index.max() + 1))
     rowptr = torch.from_numpy(mat.indptr).to(torch.long)
     row = torch.from_numpy(mat.tocoo().row).to(torch.long)
@@ -70,6 +53,7 @@ def correctness(dataset):
     c = cbm_matrix(edge_index.to(torch.int32), values, alpha=3)
     c.check_format(edge_index)
 
+    logger.info(f"Compression ratio: {calculate_compression_ratio(edge_index, c):.2f}")
     dim_size = rowptr.size(0) - 1
 
     for size in sizes:
@@ -91,13 +75,7 @@ def correctness(dataset):
         torch.testing.assert_close(out0, out3, atol=1e-2, rtol=1e-2)
 
 
-def timing(dataset):
-    group, name = dataset
-    if group == "Planetoid":
-        edge_index = read_planetoid_dataset(name)
-    else:
-        edge_index = read_suite_sparse_dataset(dataset)
-
+def timing(edge_index, name):
     mat = csr_matrix((torch.ones(edge_index.size(1)), edge_index), shape=(edge_index.max() + 1, edge_index.max() + 1))
     rowptr = torch.from_numpy(mat.indptr).to(torch.long)
 
@@ -170,30 +148,33 @@ def timing(dataset):
     winner = torch.cat([torch_winner, mkl_winner], dim=0).tolist()
 
     table = PrettyTable()
-    table.title = f"{group}/{name} (avg row length: {avg_row_len:.2f}, num_nodes: {a.size(0)}, num_edges: {edge_index.size(1)})"
+    table.title = f"{name} (avg row length: {avg_row_len:.2f}, num_nodes: {a.size(0)}, num_edges: {edge_index.size(1)})"
     header = [""] + [f"{size:>5}" for size in sizes]
     table.field_names = header
     methods = ["torch_csr_spmm", "cbm_torch_csr_spmm", "mkl_csr_spmm", "cbm_mkl_csr_spmm"]
 
-    cbm_torch_csr_spmm_time_list = [f"{t_1} ({((t_2 - t_1) / t_2) * 100:.1f}%)" for t_1, t_2 in zip(cbm_torch_csr_spmm_time_list, torch_csr_spmm_time_list)]
-    cbm_mkl_spmm_time_list = [f"{t_1} ({((t_2 - t_1) / t_2) * 100:.1f}%)" for t_1, t_2 in zip(cbm_mkl_spmm_time_list, mkl_spmm_time_list)]
+    compute_improvement_percentage = lambda reference, value: ((reference - value) / reference) * 100
+
+    cbm_torch_csr_spmm_time_list = [f"{cbm_t} ({compute_improvement_percentage(torch_t, cbm_t):.1f}%)"
+                                    for cbm_t, torch_t in zip(cbm_torch_csr_spmm_time_list, torch_csr_spmm_time_list)]
+    cbm_mkl_spmm_time_list = [f"{cbm_t} ({compute_improvement_percentage(mkl_t, cbm_t):.1f}%)"
+                              for cbm_t, mkl_t in zip(cbm_mkl_spmm_time_list, mkl_spmm_time_list)]
+
 
     time_data = [torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list]
     for method, times, wins in zip(methods, time_data, winner):
         row = [method, ] + [f"{underline(bold(t, w), w)}" for t, w in zip(times, wins)]
         table.add_row(row)
-    print(table)
+    logger.info(table)
 
 
 if __name__ == "__main__":
-    iters = 50
-    sizes = [50, 100, 500, 1000, 2000]
-
-    for dataset in itertools.chain(short_rows):
-        group, name = dataset
-        if group == "Planetoid":
-            mat = read_planetoid_dataset(name)
-        else:
-            mat = read_suite_sparse_dataset(dataset)
-        correctness(dataset)
-        timing(dataset)
+    log_path = f"./logs/"
+    if not exists(log_path):
+        makedirs(log_path)
+    current_time = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
+    logger = setup_logger(filename=f"{log_path}/spmm_cpu_parallel-{current_time}.log", verbose=True)
+    name_edge_index_dict = download_and_return_datasets_as_dict(datasets)
+    for name_i, data_i in name_edge_index_dict.items():
+        correctness(data_i.edge_index)
+        timing(data_i.edge_index, name_i)

@@ -1,3 +1,6 @@
+from datetime import datetime
+from os import makedirs
+from os.path import exists
 from time import perf_counter, sleep
 
 from prettytable import PrettyTable
@@ -6,8 +9,6 @@ from torch import arange, bool, device, float32, no_grad, tensor, zeros_like, ra
 from torch.nn import Module
 from torch_geometric.nn import GCNConv
 
-from torch_geometric.datasets import SuiteSparseMatrixCollection, Planetoid, Amazon
-
 from cbm.cbm import cbm_matrix
 from gnns.utilization import add_self_loops
 from gnns.graph_convolutional_network import (NativePytorchScatterAddGCN,
@@ -15,15 +16,26 @@ from gnns.graph_convolutional_network import (NativePytorchScatterAddGCN,
                                               NativePytorchCSRSparseMatrixGCN,
                                               MKLParallelCSRSparseMatrixGCN,
                                               CBMParallelMKLCSRSparseMatrixGCN,
-                                              CBMParallelTorchCSRSparseMatrixGCN,
-                                              )
+                                              CBMParallelTorchCSRSparseMatrixGCN)
+from benchmark.utilization import underline, bold, download_and_return_datasets_as_dict
+from logger import setup_logger
 
-def underline(text, flag=True):
-    return f"\033[4m{text}\033[0m" if flag else text
-
-
-def bold(text, flag=True):
-    return f"\033[1m{text}\033[0m" if flag else text
+number_of_layers = 2
+hidden_channels = [128, 256, 512]
+datasets = [
+    ("SNAP", "ca-HepPh"),
+    ("SNAP", "cit-HepTh"),
+    ("SNAP", "ca-AstroPh"),
+    ("SNAP", "web-Stanford"),
+    ("SNAP", "web-NotreDame"),
+    ("Planetoid", "Cora"),
+    ("Planetoid", "PubMed"),
+    ("DIMACS10", "coPapersDBLP"),
+    ("DIMACS10", "coPapersCiteseer"),
+    ("TKK", "s4dkt3m2"),
+    ("TKK", "g3rmt3m3"),
+    ("FIDAP", "ex26"),
+]
 
 
 def create_layer(cls, in_channels, out_channels):
@@ -76,46 +88,32 @@ def time_func(gcn_cls, edge_index, x, hidden_size, num_layers=2, iters=10, warmu
 if __name__ == "__main__":
     # MKL doesn't support cuda so don't run this on cuda to avoid errors and have a fair comparison
     device = device("cpu")
-    number_of_layers = 2
 
-    datasets = [
-        ("SNAP", "ca-AstroPh"),
-    ]
-    hidden_channels = [128, 256, 512]
+    log_path = f"./logs/"
+    if not exists(log_path):
+        makedirs(log_path)
+    current_time = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
+    logger = setup_logger(filename=f"{log_path}/gcn_cpu_parallel-{current_time}.log", verbose=True)
 
-    [Planetoid(root="../data", name=name)
-     if group == "Planetoid" else
-     Amazon(root="../data", name=name)
-     if group == "Amazon" else
-     SuiteSparseMatrixCollection(root="../data", name=name, group=group)
-     for group, name in datasets]
-
-    data_dict = {
-        name:
-            Planetoid(root="../data", name=name).data
-            if group == "Planetoid" else
-            Amazon(root="../data", name=name).data
-            if group == "Amazon" else
-            SuiteSparseMatrixCollection(root="../data", name=name, group=group).data
-        for group, name in datasets
+    data_dict = download_and_return_datasets_as_dict(datasets)
+    gcn_classes = (
+        NativePytorchScatterAddGCN,
+        NativePytorchCOOSparseMatrixGCN,
+        NativePytorchCSRSparseMatrixGCN,
+        GCNConv,
+        MKLParallelCSRSparseMatrixGCN,
+        CBMParallelMKLCSRSparseMatrixGCN,
+        CBMParallelTorchCSRSparseMatrixGCN,
+    )
+    gcn_classes_names = {
+        NativePytorchScatterAddGCN: "Native Pytorch Scatter Add",
+        NativePytorchCOOSparseMatrixGCN: "Native Pytorch COO Sparse",
+        NativePytorchCSRSparseMatrixGCN: "Native Pytorch CSR Sparse",
+        GCNConv: "Torch Geometric GCN Conv",
+        MKLParallelCSRSparseMatrixGCN: "MKL CSR Sparse",
+        CBMParallelMKLCSRSparseMatrixGCN: "CBM MKL CSR Sparse",
+        CBMParallelTorchCSRSparseMatrixGCN: "CBM Native Torch CSR Sparse",
     }
-
-    gcn_classes = (NativePytorchScatterAddGCN,
-                   NativePytorchCOOSparseMatrixGCN,
-                   NativePytorchCSRSparseMatrixGCN,
-                   GCNConv,
-                   MKLParallelCSRSparseMatrixGCN,
-                   CBMParallelMKLCSRSparseMatrixGCN,
-                   CBMParallelTorchCSRSparseMatrixGCN,
-                   )
-    gcn_classes_names = {NativePytorchScatterAddGCN: "Native Pytorch Scatter Add",
-                         NativePytorchCOOSparseMatrixGCN: "Native Pytorch COO Sparse",
-                         NativePytorchCSRSparseMatrixGCN: "Native Pytorch CSR Sparse",
-                         GCNConv: "Torch Geometric GCN Conv",
-                         MKLParallelCSRSparseMatrixGCN: "MKL CSR Sparse",
-                         CBMParallelMKLCSRSparseMatrixGCN: "CBM MKL CSR Sparse",
-                         CBMParallelTorchCSRSparseMatrixGCN: "CBM Native Torch CSR Sparse",
-                         }
 
     for name_i, data_i in data_dict.items():
         edge_index, x = data_i.edge_index, data_i.x
@@ -138,9 +136,10 @@ if __name__ == "__main__":
         winner = winner.tolist()
 
         table = PrettyTable(align="l")
-        table.field_names = [bold(f"Input Size: {in_size} / Embedding Sizes"), ] + [bold(f"{hidden_channel}") for hidden_channel in hidden_channels]
+        table.field_names = [bold(f"Input Size: {in_size} / Embedding Sizes"), ] + [bold(f"{hidden_channel}") for
+                                                                                    hidden_channel in hidden_channels]
         for i, cls in enumerate(gcn_classes):
             table.add_row([bold(gcn_classes_names[cls])] +
                           [underline(f"{t:.5f}", f) for t, f in zip(ts[i], winner[i])])
-        print(f"{bold(name_i.upper())}:")
-        print(table)
+        logger.info(f"{bold(name_i.upper())}:")
+        logger.info(table)
