@@ -5,7 +5,7 @@ from gnns.message_passing.base_message_passing import MessagePassing
 
 
 class CBMSequentialMKLCSRSparseMatrixMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, alpha: int = 2, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, alpha: int = 2, normalize: bool = False, cached: bool = True):
         super(CBMSequentialMKLCSRSparseMatrixMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached
@@ -61,7 +61,7 @@ class CBMParallelMKLCSRSparseMatrixMessagePassing(CBMSequentialMKLCSRSparseMatri
 
 
 class CBMSequentialTorchCSRSparseMatrixMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, alpha: int = 2, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, alpha: int = 2, normalize: bool = False, cached: bool = True):
         super(CBMSequentialTorchCSRSparseMatrixMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached

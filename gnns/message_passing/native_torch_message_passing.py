@@ -5,7 +5,7 @@ from gnns.message_passing.base_message_passing import MessagePassing
 
 
 class NativePytorchScatterAddMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = False, cached: bool = True):
         super(NativePytorchScatterAddMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached
@@ -43,7 +43,7 @@ class NativePytorchScatterAddMessagePassing(MessagePassing):
 
 
 class NativePytorchCOOSparseMatrixMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = False, cached: bool = True):
         super(NativePytorchCOOSparseMatrixMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached
@@ -68,7 +68,7 @@ class NativePytorchCOOSparseMatrixMessagePassing(MessagePassing):
 
 
 class NativePytorchCSRSparseMatrixMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = False, cached: bool = True):
         super(NativePytorchCSRSparseMatrixMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached

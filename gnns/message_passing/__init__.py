@@ -6,8 +6,7 @@ from gnns.message_passing.mkl_message_passing import (MKLSequentialCSRSparseMatr
                                                       MKLParallelCSRSparseMatrixMessagePassing)
 from gnns.message_passing.pyg_message_passing import (TorchScatterCOOScatterAddMessagePassing,
                                                       TorchScatterGatherCOOSegmentCOOMessagePassing,
-                                                      TorchSparseCSRSparseMatrixMessagePassing,
-                                                      TorchScatterGatherCSRSegmentCSRMessagePassing)
+                                                      TorchSparseCSRSparseMatrixMessagePassing)
 from gnns.message_passing.native_torch_message_passing import (NativePytorchScatterAddMessagePassing,
                                                                NativePytorchCOOSparseMatrixMessagePassing,
                                                                NativePytorchCSRSparseMatrixMessagePassing)
@@ -17,7 +16,6 @@ __all__ = ["NativePytorchScatterAddMessagePassing",
            "NativePytorchCSRSparseMatrixMessagePassing",
            "TorchScatterCOOScatterAddMessagePassing",
            "TorchScatterGatherCOOSegmentCOOMessagePassing",
-           "TorchScatterGatherCSRSegmentCSRMessagePassing",
            "TorchSparseCSRSparseMatrixMessagePassing",
            "MKLSequentialCSRSparseMatrixMessagePassing",
            "MKLParallelCSRSparseMatrixMessagePassing",

@@ -6,8 +6,7 @@ from gnns.graph_convolutional_network.mkl_gcn import (MKLSequentialCSRSparseMatr
                                                       MKLParallelCSRSparseMatrixGCN)
 from gnns.graph_convolutional_network.pyg_gcn import (TorchScatterCOOScatterAddGCN,
                                                       TorchScatterGatherCOOSegmentCOOGCN,
-                                                      TorchSparseCSRSparseMatrixGCN,
-                                                      TorchScatterGatherCSRSegmentCSRGCN)
+                                                      TorchSparseCSRSparseMatrixGCN)
 from gnns.graph_convolutional_network.native_torch_gcn import (NativePytorchScatterAddGCN,
                                                                NativePytorchCOOSparseMatrixGCN,
                                                                NativePytorchCSRSparseMatrixGCN)
@@ -17,7 +16,6 @@ __all__ = ["NativePytorchScatterAddGCN",
            "NativePytorchCSRSparseMatrixGCN",
            "TorchScatterCOOScatterAddGCN",
            "TorchScatterGatherCOOSegmentCOOGCN",
-           "TorchScatterGatherCSRSegmentCSRGCN",
            "TorchSparseCSRSparseMatrixGCN",
            "MKLSequentialCSRSparseMatrixGCN",
            "MKLParallelCSRSparseMatrixGCN",

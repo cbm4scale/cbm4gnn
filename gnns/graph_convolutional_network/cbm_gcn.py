@@ -9,7 +9,7 @@ from gnns.message_passing import (CBMSequentialMKLCSRSparseMatrixMessagePassing,
 
 class CBMSequentialMKLCSRSparseMatrixGCN(CBMSequentialMKLCSRSparseMatrixMessagePassing):
     def __init__(self, in_channels, out_channels):
-        super(CBMSequentialMKLCSRSparseMatrixGCN, self).__init__()
+        super(CBMSequentialMKLCSRSparseMatrixGCN, self).__init__(normalize=True)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
@@ -26,7 +26,7 @@ class CBMSequentialMKLCSRSparseMatrixGCN(CBMSequentialMKLCSRSparseMatrixMessageP
 
 class CBMParallelMKLCSRSparseMatrixGCN(CBMParallelMKLCSRSparseMatrixMessagePassing):
     def __init__(self, in_channels, out_channels):
-        super(CBMParallelMKLCSRSparseMatrixGCN, self).__init__()
+        super(CBMParallelMKLCSRSparseMatrixGCN, self).__init__(normalize=True)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
@@ -43,7 +43,7 @@ class CBMParallelMKLCSRSparseMatrixGCN(CBMParallelMKLCSRSparseMatrixMessagePassi
 
 class CBMSequentialTorchCSRSparseMatrixGCN(CBMSequentialTorchCSRSparseMatrixMessagePassing):
     def __init__(self, in_channels, out_channels):
-        super(CBMSequentialTorchCSRSparseMatrixGCN, self).__init__()
+        super(CBMSequentialTorchCSRSparseMatrixGCN, self).__init__(normalize=True)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
@@ -60,7 +60,7 @@ class CBMSequentialTorchCSRSparseMatrixGCN(CBMSequentialTorchCSRSparseMatrixMess
 
 class CBMParallelTorchCSRSparseMatrixGCN(CBMParallelTorchCSRSparseMatrixMessagePassing):
     def __init__(self, in_channels, out_channels):
-        super(CBMParallelTorchCSRSparseMatrixGCN, self).__init__()
+        super(CBMParallelTorchCSRSparseMatrixGCN, self).__init__(normalize=True)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')

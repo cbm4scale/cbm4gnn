@@ -22,7 +22,7 @@ def omp_mkl_csr_spmm(a, x, y):
 
 
 class MKLSequentialCSRSparseMatrixMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = False, cached: bool = True):
         super(MKLSequentialCSRSparseMatrixMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached
@@ -67,7 +67,7 @@ class MKLSequentialCSRSparseMatrixMessagePassing(MessagePassing):
 
 
 class MKLParallelCSRSparseMatrixMessagePassing(MKLSequentialCSRSparseMatrixMessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = False, cached: bool = True):
         super(MKLSequentialCSRSparseMatrixMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached

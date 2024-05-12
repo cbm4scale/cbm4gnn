@@ -8,7 +8,7 @@ from gnns.message_passing import (NativePytorchScatterAddMessagePassing, NativeP
 # Subclasses for each specific type of message passing
 class NativePytorchScatterAddGCN(NativePytorchScatterAddMessagePassing):
     def __init__(self, in_channels, out_channels):
-        super(NativePytorchScatterAddGCN, self).__init__()
+        super(NativePytorchScatterAddGCN, self).__init__(normalize=True)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
@@ -25,7 +25,7 @@ class NativePytorchScatterAddGCN(NativePytorchScatterAddMessagePassing):
 
 class NativePytorchCOOSparseMatrixGCN(NativePytorchCOOSparseMatrixMessagePassing):
     def __init__(self, in_channels, out_channels):
-        super(NativePytorchCOOSparseMatrixGCN, self).__init__()
+        super(NativePytorchCOOSparseMatrixGCN, self).__init__(normalize=True)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
@@ -42,7 +42,7 @@ class NativePytorchCOOSparseMatrixGCN(NativePytorchCOOSparseMatrixMessagePassing
 
 class NativePytorchCSRSparseMatrixGCN(NativePytorchCSRSparseMatrixMessagePassing):
     def __init__(self, in_channels, out_channels):
-        super(NativePytorchCSRSparseMatrixGCN, self).__init__()
+        super(NativePytorchCSRSparseMatrixGCN, self).__init__(normalize=True)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')

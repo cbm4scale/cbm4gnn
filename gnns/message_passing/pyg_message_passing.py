@@ -7,7 +7,7 @@ from gnns.utilization import normalize_edge_index
 
 
 class TorchScatterCOOScatterAddMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = False, cached: bool = True):
         super(TorchScatterCOOScatterAddMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached
@@ -34,7 +34,7 @@ class TorchScatterCOOScatterAddMessagePassing(MessagePassing):
 
 
 class TorchScatterGatherCOOSegmentCOOMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = False, cached: bool = True):
         super(TorchScatterGatherCOOSegmentCOOMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached
@@ -61,7 +61,7 @@ class TorchScatterGatherCOOSegmentCOOMessagePassing(MessagePassing):
 
 
 class TorchSparseCSRSparseMatrixMessagePassing(MessagePassing):
-    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = True, cached: bool = True):
+    def __init__(self, flow: str = "source_to_target", node_dim: int = 0, normalize: bool = False, cached: bool = True):
         super(TorchSparseCSRSparseMatrixMessagePassing, self).__init__(flow, node_dim)
         self.normalize = normalize
         self.cached = cached
@@ -93,9 +93,3 @@ class TorchSparseCSRSparseMatrixMessagePassing(MessagePassing):
                 edge_weight = ones(edge_index.size(1), dtype=x.dtype)
             a_t = SparseTensor(row=edge_index[1], col=edge_index[0], value=edge_weight, sparse_sizes=size).to_torch_sparse_csr_tensor()
         return a_t @ x
-
-
-class TorchScatterGatherCSRSegmentCSRMessagePassing(MessagePassing):
-    def aggregate(self, inputs, index, dim_size):
-        index_ptr = cat([tensor([0]), index.bincount().cumsum(0)], dim=0)
-        return segment_csr(inputs, index_ptr, reduce="add")

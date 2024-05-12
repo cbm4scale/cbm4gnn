@@ -5,7 +5,7 @@ from gnns.message_passing import MKLSequentialCSRSparseMatrixMessagePassing, MKL
 
 class MKLSequentialCSRSparseMatrixGCN(MKLSequentialCSRSparseMatrixMessagePassing):
     def __init__(self, in_channels, out_channels):
-        super(MKLSequentialCSRSparseMatrixGCN, self).__init__()
+        super(MKLSequentialCSRSparseMatrixGCN, self).__init__(normalize=True)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
@@ -22,7 +22,7 @@ class MKLSequentialCSRSparseMatrixGCN(MKLSequentialCSRSparseMatrixMessagePassing
 
 class MKLParallelCSRSparseMatrixGCN(MKLParallelCSRSparseMatrixMessagePassing):
     def __init__(self, in_channels, out_channels):
-        super(MKLParallelCSRSparseMatrixGCN, self).__init__()
+        super(MKLParallelCSRSparseMatrixGCN, self).__init__(normalize=True)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
