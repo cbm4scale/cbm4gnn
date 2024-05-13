@@ -2,7 +2,7 @@ from torch import int32, float32, sparse_coo_tensor, ones, empty
 
 from cbm import cbm_mkl_cpp as cbm_
 from gnns.message_passing.base_message_passing import MessagePassing
-from gnns.utilization import normalize_edge_index
+from gnns.utility import normalize_edge_index
 
 
 def seq_mkl_csr_spmm(a, x, y):

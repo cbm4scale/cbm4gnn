@@ -1,6 +1,6 @@
 from torch import zeros, sparse_coo_tensor, ones, float32
 
-from gnns.utilization import normalize_edge_index, normalize_torch_adj
+from gnns.utility import normalize_edge_index, normalize_torch_adj
 from gnns.message_passing.base_message_passing import MessagePassing
 
 

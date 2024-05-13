@@ -3,7 +3,7 @@ from torch_scatter import scatter, segment_coo, segment_csr
 from torch_sparse import SparseTensor
 
 from gnns.message_passing.base_message_passing import MessagePassing
-from gnns.utilization import normalize_edge_index
+from gnns.utility import normalize_edge_index
 
 
 class TorchScatterCOOScatterAddMessagePassing(MessagePassing):

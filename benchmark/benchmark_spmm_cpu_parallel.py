@@ -9,8 +9,8 @@ from scipy.sparse import csr_matrix
 
 from cbm.cbm import cbm_matrix
 from cbm import cbm_mkl_cpp as cbm_
-from cbm.utilization import check_edge_index
-from benchmark.utilization import underline, bold, download_and_return_datasets_as_dict, calculate_compression_ratio
+from cbm.utility import check_edge_index
+from benchmark.utility import underline, bold, download_and_return_datasets_as_dict, calculate_compression_ratio
 from logger import setup_logger
 
 iters = 50

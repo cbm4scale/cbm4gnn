@@ -13,7 +13,7 @@ from torch_geometric.nn import GCNConv
 set_num_threads(1)
 
 from cbm.cbm import cbm_matrix
-from gnns.utilization import add_self_loops
+from gnns.utility import add_self_loops
 from gnns.graph_convolutional_network import (NativePytorchScatterAddGCN,
                                               NativePytorchCOOSparseMatrixGCN,
                                               NativePytorchCSRSparseMatrixGCN,
@@ -21,7 +21,7 @@ from gnns.graph_convolutional_network import (NativePytorchScatterAddGCN,
                                               CBMSequentialMKLCSRSparseMatrixGCN,
                                               CBMSequentialTorchCSRSparseMatrixGCN,
                                               )
-from benchmark.utilization import underline, bold, download_and_return_datasets_as_dict
+from benchmark.utility import underline, bold, download_and_return_datasets_as_dict
 from logger import setup_logger
 
 

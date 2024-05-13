@@ -10,14 +10,14 @@ from torch.nn import Module
 from torch_geometric.nn import GCNConv
 
 from cbm.cbm import cbm_matrix
-from gnns.utilization import add_self_loops
+from gnns.utility import add_self_loops
 from gnns.graph_convolutional_network import (NativePytorchScatterAddGCN,
                                               NativePytorchCOOSparseMatrixGCN,
                                               NativePytorchCSRSparseMatrixGCN,
                                               MKLParallelCSRSparseMatrixGCN,
                                               CBMParallelMKLCSRSparseMatrixGCN,
                                               CBMParallelTorchCSRSparseMatrixGCN)
-from benchmark.utilization import underline, bold, download_and_return_datasets_as_dict
+from benchmark.utility import underline, bold, download_and_return_datasets_as_dict
 from logger import setup_logger
 
 number_of_layers = 2
