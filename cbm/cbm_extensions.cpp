@@ -675,7 +675,8 @@ static inline void seq_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
     mkl_set_num_threads(1);
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(0);
+    MKL_INT rhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -703,11 +704,11 @@ static inline void seq_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
+                                 rhs_n_cols,
+                                 rhs_n_cols,
                                  0.0f, 
                                  dst_ptr,
-                                 lhs_n_cols));
+                                 rhs_n_cols));
 
     // spmm done; start update
 
@@ -811,7 +812,8 @@ static inline void seq_s_spmm_csr_int32_(const at::Tensor& lhs_row_b,
     mkl_set_num_threads(1);
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(0);
+    MKL_INT rhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -839,11 +841,11 @@ static inline void seq_s_spmm_csr_int32_(const at::Tensor& lhs_row_b,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
+                                 rhs_n_cols,
+                                 rhs_n_cols,
                                  0.0f, 
                                  dst_ptr,
-                                 lhs_n_cols));
+                                 rhs_n_cols));
 
     mkl_set_num_threads(max_threads);
 }
@@ -871,7 +873,8 @@ static inline void seq_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_
     mkl_set_num_threads(1);
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(0);
+    MKL_INT rhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -899,11 +902,11 @@ static inline void seq_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
+                                 rhs_n_cols,
+                                 rhs_n_cols,
                                  0.0f, 
                                  dst_ptr,
-                                 lhs_n_cols));
+                                 rhs_n_cols));
 
     MKL_INT dst_n_rows = dst.size(0);
     MKL_INT dst_n_cols = dst.size(1);
@@ -1130,7 +1133,8 @@ static inline void omp_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
     TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(0);
+    MKL_INT rhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -1158,11 +1162,11 @@ static inline void omp_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
+                                 rhs_n_cols,
+                                 rhs_n_cols,
                                  0.0f, 
                                  dst_ptr,
-                                 lhs_n_cols));
+                                 rhs_n_cols));
 
     MKL_INT dst_n_rows = dst.size(0);
     MKL_INT dst_n_cols = dst.size(1);
@@ -1248,7 +1252,8 @@ static inline void omp_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_
     TORCH_CHECK(multiplier.scalar_type() == torch::kFloat32, "edge_dst (NOT torch::kFloat32)");
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(0);
+    MKL_INT rhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -1276,11 +1281,11 @@ static inline void omp_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
+                                 rhs_n_cols,
+                                 rhs_n_cols,
                                  0.0f, 
                                  dst_ptr,
-                                 lhs_n_cols));
+                                 rhs_n_cols));
 
     MKL_INT dst_n_rows = dst.size(0);
     MKL_INT dst_n_cols = dst.size(1);
@@ -1725,7 +1730,8 @@ static inline void omp_s_spmm_csr_int32_(const at::Tensor& lhs_row_b,
     TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
     
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(0);
+    MKL_INT rhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -1753,11 +1759,11 @@ static inline void omp_s_spmm_csr_int32_(const at::Tensor& lhs_row_b,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
+                                 rhs_n_cols,
+                                 rhs_n_cols,
                                  0.0f, 
                                  dst_ptr,
-                                 lhs_n_cols));
+                                 rhs_n_cols));
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
