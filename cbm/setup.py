@@ -19,6 +19,8 @@ extra_compile_args = [
     '-fopenmp',
     '-march=native',
     '-O2',
+    '-std=c++20',
+    '-I/home/alves/arbok/source/arbok/include',
     #--------
     ##'-DMKL_ILP64',  # Use ILP64 integer size
     #'-m64',  # Target 64-bit architecture
@@ -41,6 +43,8 @@ extra_link_args = [
     '-lpthread',
     '-lm',
     '-ldl',
+    '-L/home/alves/arbok/build/',
+    '-larbok',
     #----
     #'-m64',
     #'-Wl,--start-group',
