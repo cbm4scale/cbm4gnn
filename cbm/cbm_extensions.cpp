@@ -1,31 +1,9 @@
 #include <torch/extension.h>
 #include <omp.h>
+#include <arbok/tarjan/tarjan_pq.h>
+
 #include "helpers.hpp"
 #include <immintrin.h>
-
-//#include <arbok/tarjan/tarjan_pq.h>
-
-/*TODO: 
- * 1. improve intel-mkl error handling. (done?)
- * 2. variable renaming:
- *      - different variables w/ same value (e.g. src_n_rows and csr_n_rows)
- * 3. remove unnecessary code:
- *      - check unnecessary spmm and update kernel (done!)
- *      - clean helper file and included headers (done!)
- * 4. add modification for +CBM
- *      - add flag in constructor
- *      - remove edge if it has negative deltas
- * 5. check if update works for int64
- * 6. include a testing file to verify that the class works
- * 7- alpha does not behave as expected, correct this ASAP
-*/
-
-// reads dataset in coo (int32_t) format and converts it to
-// cbm format, with matrix of deltas in csr (int32_t) format
-// matrix of dependencies (edges) is also represented in csr.
-
-// note: the format of these matrices can be changed on python's
-// side. e.g. cbm_matrix(edge_index, valuesl, ... , deltas_format = 'coo')
 
 std::vector<torch::Tensor> cbm_init_v1_(const torch::Tensor& src_row,
                                         const torch::Tensor& src_col,
@@ -87,12 +65,51 @@ std::vector<torch::Tensor> cbm_init_v1_(const torch::Tensor& src_row,
                                          &syrk_val));
 
     //create a vector of nnz for debugging purposes
-    std::vector<MKL_INT>  nnz_vector;
+    std::vector<MKL_INT> nnz_vector;
     
     // declare distance graph G
-    std::vector<Edge> G;
+    std::vector<std::array<MKL_INT, 3>> G;
 
+    MKL_INT candidates = 0;
     // populate distance graph G
+    for (MKL_INT row = 0; row < syrk_n_rows; row++) {
+        MKL_INT s = syrk_row_b[row]; 
+        MKL_INT e = syrk_row_e[row];
+        MKL_INT nnz_r1 = csr_row_e[row] - csr_row_b[row];
+
+        // again debugging purposes...
+        nnz_vector.push_back(nnz_r1);    
+
+        G.push_back({src_n_rows, row, nnz_r1});
+        candidates++;
+
+
+        for (MKL_INT i = s+1; i < e; i++) {
+            MKL_INT col = syrk_col[i];
+            MKL_INT val = syrk_val[i];
+            MKL_INT nnz_r2 = csr_row_e[col] - csr_row_b[col];
+            MKL_INT h = nnz_r1 + nnz_r2 - (2 * val);
+
+            if (h < (nnz_r1 - alpha)) {
+                G.push_back({col, row, h});
+                candidates++;
+            }
+
+            if( h < (nnz_r2 - alpha)) {
+                G.push_back({row, col, h});
+                candidates++;
+            }
+        }
+    }
+
+    // declare distance graph G
+    //std::vector<Edge> G;
+
+    // initialize arbok datastructures for MSA
+    arbok::TarjanPQ msa(src_n_rows+1, candidates);
+
+    // first run to identify number of candidate edges
+    // this step is required due to arbok library
     for (int row = 0; row < syrk_n_rows; row++) {
         int s = syrk_row_b[row]; 
         int e = syrk_row_e[row];
@@ -102,7 +119,9 @@ std::vector<torch::Tensor> cbm_init_v1_(const torch::Tensor& src_row,
         nnz_vector.push_back(nnz_r1);    
 
         // add virtual edges
-        G.push_back(Edge(csr_n_rows, row, nnz_r1));
+        //G.push_back(Edge(src_n_rows, row, nnz_r1));
+        msa.create_edge(src_n_rows, row, nnz_r1);
+
 
         for (int i = s+1; i < e; i++) {
             int col = syrk_col[i];
@@ -110,74 +129,42 @@ std::vector<torch::Tensor> cbm_init_v1_(const torch::Tensor& src_row,
             int nnz_r2 = csr_row_e[col] - csr_row_b[col];
             int h = nnz_r1 + nnz_r2 - (2 * val);
 
-            //add edge if suitable
-            if  (h < (nnz_r1 - alpha) || h < (nnz_r2 - alpha))
-                G.push_back(Edge(row, col, h));
-        }
-    }
+            if (h < (nnz_r1 - alpha)) {
+                // edge from v to u is a suitable candidate
+                msa.create_edge(col, row, h);
+            }
 
-    mkl_sparse_destroy(m_coo);
-    mkl_sparse_destroy(m_syrk);
-    
-    sort(G.begin(), G.end(), [](Edge& a, Edge& b) {
-        if (a.weight != b.weight) 
-            return a.weight < b.weight;
-        else
-            return a.u > b.u;
-    });
-
-    for (unsigned int i=0; i < G.size()-1; i++) {
-        
-        if (G[i].weight > G[i+1].weight) {
-            printf("1-not sorted\n");
-        }
-
-        if (G[i].weight == G[i+1].weight) {
-            if (G[i].u < G[i+1].u) {
-                printf("2-not sorted\n");
+            if( h < (nnz_r2 - alpha)) {
+                // edge from u to v is a suitable candidate
+                msa.create_edge(row, col, h);
             }
         }
     }
+    mkl_sparse_destroy(m_coo);
+    mkl_sparse_destroy(m_syrk);
 
-    // initialize disjoint set
-    DisjointSet dsu(src_n_rows + 1);
+    MKL_INT root = src_n_rows;
+    msa.run(root);
+    auto msa_list = msa.reconstruct(root);
 
-    // initizalize mst adjacency lists
-    std::vector<std::vector<MKL_INT>> mst(src_n_rows + 1);
+    std::vector<std::vector<MKL_INT>> msa_adjacency(src_n_rows + 1);
 
-    MKL_INT mst_weight = 0;
-
-    for (Edge& edge : G) {
-        MKL_INT u = edge.u;
-        MKL_INT v = edge.v;
-        MKL_INT w = edge.weight;
-
-        if (!dsu.connected(u, v)) {
-            dsu.merge(u, v);
-            mst[edge.u].push_back(edge.v);
-            mst[edge.v].push_back(edge.u);
-            
-            mst_weight += edge.weight;
-        }
+    for(int e_idx : msa_list) {
+        auto [u, v, w] = G[e_idx];
+        msa_adjacency[u].push_back(v);
     }
-
-    //printf("elements in mst_root: %ld\n", mst[src_n_rows].size());
-
-    // delete later 
-    //std::cout << "nnz: " << src_row.size(0) << " mst_weight: " << mst_weight << " ratio: " << (float) src_row.size(0) / (float) mst_weight << std::endl;
 
     long int delta_len = 0;
     std::vector<float> delta_val;
     std::vector<MKL_INT> delta_col;
     std::vector<MKL_INT> delta_row;
 
+    // probably redundant but can be improved later
     std::vector<std::vector<MKL_INT>> rooted_tree(src_n_rows + 1);
     
     // declare bfs queue
     std::queue<MKL_INT> fifo;
-    
-    // push root vertex to stack
-    fifo.push(csr_n_rows);
+    fifo.push(root);
     
     // declare and initialize list of open nodes
     std::vector<bool> opened_node(src_n_rows + 1, false);
@@ -188,7 +175,7 @@ std::vector<torch::Tensor> cbm_init_v1_(const torch::Tensor& src_row,
         MKL_INT u = fifo.front();
         fifo.pop();
         
-        for (MKL_INT v : mst[u]) 
+        for (MKL_INT v : msa_adjacency[u]) 
         {
             if (!opened_node[v]) 
             {
@@ -402,9 +389,45 @@ std::vector<torch::Tensor> cbm_init_v2_(const torch::Tensor& src_row,
     std::vector<MKL_INT>  nnz_vector;
     
     // declare distance graph G
-    std::vector<Edge> G;
+    std::vector<std::array<MKL_INT, 3>> G;
 
+    MKL_INT candidates = 0;
     // populate distance graph G
+    for (MKL_INT row = 0; row < syrk_n_rows; row++) {
+        MKL_INT s = syrk_row_b[row]; 
+        MKL_INT e = syrk_row_e[row];
+        MKL_INT nnz_r1 = csr_row_e[row] - csr_row_b[row];
+
+        // again debugging purposes...
+        nnz_vector.push_back(nnz_r1);    
+
+        G.push_back({src_n_rows, row, nnz_r1});
+        candidates++;
+
+
+        for (MKL_INT i = s+1; i < e; i++) {
+            MKL_INT col = syrk_col[i];
+            MKL_INT val = syrk_val[i];
+            MKL_INT nnz_r2 = csr_row_e[col] - csr_row_b[col];
+            MKL_INT h = nnz_r1 + nnz_r2 - (2 * val);
+
+            if (h < (nnz_r1 - alpha)) {
+                G.push_back({col, row, h});
+                candidates++;
+            }
+
+            if( h < (nnz_r2 - alpha)) {
+                G.push_back({row, col, h});
+                candidates++;
+            }
+        }
+    }
+
+    // initialize arbok datastructures for MSA
+    arbok::TarjanPQ msa(src_n_rows+1, candidates);
+
+    // first run to identify number of candidate edges
+    // this step is required due to arbok library
     for (int row = 0; row < syrk_n_rows; row++) {
         int s = syrk_row_b[row]; 
         int e = syrk_row_e[row];
@@ -414,7 +437,9 @@ std::vector<torch::Tensor> cbm_init_v2_(const torch::Tensor& src_row,
         nnz_vector.push_back(nnz_r1);    
 
         // add virtual edges
-        G.push_back(Edge(csr_n_rows, row, nnz_r1));
+        //G.push_back(Edge(src_n_rows, row, nnz_r1));
+        msa.create_edge(src_n_rows, row, nnz_r1);
+
 
         for (int i = s+1; i < e; i++) {
             int col = syrk_col[i];
@@ -422,61 +447,30 @@ std::vector<torch::Tensor> cbm_init_v2_(const torch::Tensor& src_row,
             int nnz_r2 = csr_row_e[col] - csr_row_b[col];
             int h = nnz_r1 + nnz_r2 - (2 * val);
 
-            //add edge if suitable
-            if  (h < (nnz_r1 - alpha) || h < (nnz_r2 - alpha))
-                G.push_back(Edge(row, col, h));
-        }
-    }
+            if (h < (nnz_r1 - alpha)) {
+                // edge from v to u is a suitable candidate
+                msa.create_edge(col, row, h);
+            }
 
-    mkl_sparse_destroy(m_coo);
-    mkl_sparse_destroy(m_syrk);
-    
-    sort(G.begin(), G.end(), [](Edge& a, Edge& b) {
-        if (a.weight != b.weight) 
-            return a.weight < b.weight;
-        else
-            return a.u > b.u;
-    });
-
-    for (unsigned int i=0; i < G.size()-1; i++) {
-        
-        if (G[i].weight > G[i+1].weight) {
-            printf("1-not sorted\n");
-        }
-
-        if (G[i].weight == G[i+1].weight) {
-            if (G[i].u < G[i+1].u) {
-                printf("2-not sorted\n");
+            if( h < (nnz_r2 - alpha)) {
+                // edge from u to v is a suitable candidate
+                msa.create_edge(row, col, h);
             }
         }
     }
+    mkl_sparse_destroy(m_coo);
+    mkl_sparse_destroy(m_syrk);
 
-    // initialize disjoint set
-    DisjointSet dsu(src_n_rows + 1);
+    MKL_INT root = src_n_rows;
+    msa.run(root);
+    auto msa_list = msa.reconstruct(root);
 
-    // initizalize mst adjacency lists
-    std::vector<std::vector<MKL_INT>> mst(src_n_rows + 1);
+    std::vector<std::vector<MKL_INT>> msa_adjacency(src_n_rows + 1);
 
-    MKL_INT mst_weight = 0;
-
-    for (Edge& edge : G) {
-        MKL_INT u = edge.u;
-        MKL_INT v = edge.v;
-        MKL_INT w = edge.weight;
-
-        if (!dsu.connected(u, v)) {
-            dsu.merge(u, v);
-            mst[edge.u].push_back(edge.v);
-            mst[edge.v].push_back(edge.u);
-            
-            mst_weight += edge.weight;
-        }
+    for(int e_idx : msa_list) {
+        auto [u, v, w] = G[e_idx];
+        msa_adjacency[u].push_back(v);
     }
-
-    //printf("elements in mst_root: %ld\n", mst[src_n_rows].size());
-
-    // delete later 
-    //std::cout << "nnz: " << src_row.size(0) << " mst_weight: " << mst_weight << " ratio: " << (float) src_row.size(0) / (float) mst_weight << std::endl;
 
     long int delta_len = 0;
     std::vector<float> delta_val;
@@ -499,7 +493,7 @@ std::vector<torch::Tensor> cbm_init_v2_(const torch::Tensor& src_row,
         MKL_INT u = fifo.front();
         fifo.pop();
         
-        for (MKL_INT v : mst[u]) 
+        for (MKL_INT v : msa_adjacency[u]) 
         {
             if (!opened_node[v]) 
             {
@@ -675,8 +669,7 @@ static inline void seq_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
     mkl_set_num_threads(1);
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(0);
-    MKL_INT rhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -704,11 +697,11 @@ static inline void seq_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 rhs_n_cols,
-                                 rhs_n_cols,
+                                 lhs_n_cols,
+                                 lhs_n_cols, 
                                  0.0f, 
                                  dst_ptr,
-                                 rhs_n_cols));
+                                 lhs_n_cols));
 
     // spmm done; start update
 
@@ -812,8 +805,7 @@ static inline void seq_s_spmm_csr_int32_(const at::Tensor& lhs_row_b,
     mkl_set_num_threads(1);
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(0);
-    MKL_INT rhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -841,11 +833,11 @@ static inline void seq_s_spmm_csr_int32_(const at::Tensor& lhs_row_b,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 rhs_n_cols,
-                                 rhs_n_cols,
+                                 lhs_n_cols,
+                                 lhs_n_cols, 
                                  0.0f, 
                                  dst_ptr,
-                                 rhs_n_cols));
+                                 lhs_n_cols));
 
     mkl_set_num_threads(max_threads);
 }
@@ -873,8 +865,7 @@ static inline void seq_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_
     mkl_set_num_threads(1);
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(0);
-    MKL_INT rhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -902,11 +893,11 @@ static inline void seq_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 rhs_n_cols,
-                                 rhs_n_cols,
+                                 lhs_n_cols,
+                                 lhs_n_cols, 
                                  0.0f, 
                                  dst_ptr,
-                                 rhs_n_cols));
+                                 lhs_n_cols));
 
     MKL_INT dst_n_rows = dst.size(0);
     MKL_INT dst_n_cols = dst.size(1);
@@ -1133,8 +1124,7 @@ static inline void omp_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
     TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(0);
-    MKL_INT rhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -1162,11 +1152,11 @@ static inline void omp_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 rhs_n_cols,
-                                 rhs_n_cols,
+                                 lhs_n_cols,
+                                 lhs_n_cols, 
                                  0.0f, 
                                  dst_ptr,
-                                 rhs_n_cols));
+                                 lhs_n_cols));
 
     MKL_INT dst_n_rows = dst.size(0);
     MKL_INT dst_n_cols = dst.size(1);
@@ -1252,8 +1242,7 @@ static inline void omp_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_
     TORCH_CHECK(multiplier.scalar_type() == torch::kFloat32, "edge_dst (NOT torch::kFloat32)");
 
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(0);
-    MKL_INT rhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -1281,11 +1270,11 @@ static inline void omp_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 rhs_n_cols,
-                                 rhs_n_cols,
+                                 lhs_n_cols,
+                                 lhs_n_cols, 
                                  0.0f, 
                                  dst_ptr,
-                                 rhs_n_cols));
+                                 lhs_n_cols));
 
     MKL_INT dst_n_rows = dst.size(0);
     MKL_INT dst_n_cols = dst.size(1);
@@ -1730,8 +1719,7 @@ static inline void omp_s_spmm_csr_int32_(const at::Tensor& lhs_row_b,
     TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
     
     MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(0);
-    MKL_INT rhs_n_cols = rhs.size(1);
+    MKL_INT lhs_n_cols = rhs.size(1);
     MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
     MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
     MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
@@ -1759,11 +1747,11 @@ static inline void omp_s_spmm_csr_int32_(const at::Tensor& lhs_row_b,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
                                  rhs_ptr, 
-                                 rhs_n_cols,
-                                 rhs_n_cols,
+                                 lhs_n_cols,
+                                 lhs_n_cols, 
                                  0.0f, 
                                  dst_ptr,
-                                 rhs_n_cols));
+                                 lhs_n_cols));
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
