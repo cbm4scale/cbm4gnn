@@ -116,13 +116,10 @@ if __name__ == "__main__":
     }
 
     for name_i, data_i in data_dict.items():
-        edge_index, x = data_i.edge_index, data_i.x
-        edge_index = add_self_loops(edge_index)
+        edge_index = add_self_loops(data_i.edge_index)
         edge_index_t = stack([edge_index[1], edge_index[0]], dim=0).to(int32)
         c = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=float32), normalized=True, alpha=3)
-
-        if x is None:
-            x = rand(data_i.num_nodes, 1)
+        x = rand(data_i.num_nodes, 1)
         in_size = x.size(1)
         ts = [[] for _ in range(len(gcn_classes))]
         for hidden_channel in hidden_channels:
