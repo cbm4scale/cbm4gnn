@@ -1,7 +1,7 @@
 # To build the extension, follow the instructions below:
 # Set the MKLROOT environment variables to the path of your MKL installation.
 # This can be done by running `source /path/to/setvars.sh` in your terminal.
-# Run `python setup.py build_ext --inplace develop` in the `cbm` directory.
+# Run `python setup.py build_ext --inplace` in the `cbm` directory.
 
 from setuptools import setup, find_packages
 from torch.utils.cpp_extension import BuildExtension, CppExtension
@@ -20,7 +20,7 @@ extra_compile_args = [
     '-march=native',
     '-O2',
     '-std=c++20',
-    '-I/home/alves/arbok/source/arbok/include',
+    f'-I{os.path.dirname(os.path.abspath(__file__))}/../arbok/source/arbok/include',
     #--------
     ##'-DMKL_ILP64',  # Use ILP64 integer size
     #'-m64',  # Target 64-bit architecture
@@ -43,7 +43,7 @@ extra_link_args = [
     '-lpthread',
     '-lm',
     '-ldl',
-    '-L/home/alves/arbok/build/',
+    f'-L{os.path.dirname(os.path.abspath(__file__))}/../arbok/build/',
     '-larbok',
     #----
     #'-m64',
