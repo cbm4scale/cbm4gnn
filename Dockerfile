@@ -42,4 +42,5 @@ ENV LD_LIBRARY_PATH /workspace/arbok/build/:$LD_LIBRARY_PATH
 RUN python -m pip install -r requirements_dev.txt
 RUN python -m pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/torch-2.2.0+cu121.html
 # Build the cbm format
+RUN git clone https://github.com/chistopher/arbok.git
 RUN python setup.py
