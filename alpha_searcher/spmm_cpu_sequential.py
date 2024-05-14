@@ -20,6 +20,8 @@ sizes = [128, 256, 512, 1024, 2048]
 alphas = [0, 1, 2, 4, 8, 16, 32, 64, 128]
 datasets = [
     ("SNAP", "ca-HepPh"),
+    ("SNAP", "ca-HepTh"),
+    ("SNAP", "cit-HepPh"),
     ("SNAP", "cit-HepTh"),
     ("SNAP", "ca-AstroPh"),
     ("SNAP", "web-Stanford"),
@@ -28,6 +30,9 @@ datasets = [
     ("Planetoid", "PubMed"),
     ("DIMACS10", "coPapersDBLP"),
     ("DIMACS10", "coPapersCiteseer"),
+    ("TKK", "s4dkt3m2"),
+    ("TKK", "g3rmt3m3"),
+    ("FIDAP", "ex26"),
 ]
 
 
