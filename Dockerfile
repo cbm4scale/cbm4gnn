@@ -36,6 +36,7 @@ RUN echo "source /opt/intel/oneapi/setvars.sh" >> ~/.bashrc
 COPY ./ /workspace
 WORKDIR /workspace
 ENV PYTHONPATH /workspace:$PYTHONPATH
+ENV LD_LIBRARY_PATH /workspace/arbok/build/:$LD_LIBRARY_PATH
 
 # Install the required Python packages
 RUN python -m pip install -r requirements_dev.txt
