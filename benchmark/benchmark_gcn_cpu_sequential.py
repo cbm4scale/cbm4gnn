@@ -29,6 +29,8 @@ number_of_layers = 2
 hidden_channels = [128, 256, 512, 1024, 2048]
 datasets = [
     ("SNAP", "ca-HepPh"),
+    ("SNAP", "ca-HepTh"),
+    ("SNAP", "cit-HepPh"),
     ("SNAP", "cit-HepTh"),
     ("SNAP", "ca-AstroPh"),
     ("SNAP", "web-Stanford"),
@@ -38,6 +40,21 @@ datasets = [
     ("DIMACS10", "coPapersDBLP"),
     ("DIMACS10", "coPapersCiteseer"),
 ]
+
+
+alpha_per_dataset = {
+    "ca-HepPh": 3,
+    "ca-HepTh": 3,
+    "cit-HepPh": 3,
+    "cit-HepTh": 3,
+    "ca-AstroPh": 3,
+    "web-Stanford": 3,
+    "web-NotreDame": 3,
+    "Cora": 3,
+    "PubMed": 3,
+    "coPapersDBLP": 3,
+    "coPapersCiteseer": 3,
+}
 
 
 def create_layer(cls, in_channels, out_channels):
@@ -120,7 +137,8 @@ if __name__ == "__main__":
     for name_i, data_i in data_dict.items():
         edge_index = add_self_loops(data_i.edge_index)
         edge_index_t = stack([edge_index[1], edge_index[0]], dim=0).to(int32)
-        c = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=float32), normalized=True, alpha=3)
+        alpha = alpha_per_dataset[name_i]
+        c = cbm_matrix(edge_index_t, ones(edge_index.size(1), dtype=float32), normalized=True, alpha=alpha)
         x = rand(data_i.num_nodes, 1)
         in_size = x.size(1)
         ts = [[] for _ in range(len(gcn_classes))]
@@ -135,6 +153,7 @@ if __name__ == "__main__":
         winner = winner.tolist()
 
         table = PrettyTable(align="l")
+        table.title = f"{name_i.upper()} alpha: {alpha} size: {in_size} (avg row length: {data_i.edge_index.size(1) / data_i.num_nodes:.2f}, num_nodes: {data_i.num_nodes}, num_edges: {data_i.edge_index.size(1)})"
         table.field_names = [bold(f"Input Size: {in_size} / Embedding Sizes"), ] + [bold(f"{hidden_channel}") for
                                                                                     hidden_channel in hidden_channels]
         for i, cls in enumerate(gcn_classes):

@@ -19,6 +19,8 @@ iters = 50
 sizes = [128, 256, 512, 1024, 2048]
 datasets = [
     ("SNAP", "ca-HepPh"),
+    ("SNAP", "ca-HepTh"),
+    ("SNAP", "cit-HepPh"),
     ("SNAP", "cit-HepTh"),
     ("SNAP", "ca-AstroPh"),
     ("SNAP", "web-Stanford"),
@@ -30,6 +32,19 @@ datasets = [
 ]
 
 
+alpha_per_dataset = {
+    "ca-HepPh": 3,
+    "ca-HepTh": 3,
+    "cit-HepPh": 3,
+    "cit-HepTh": 3,
+    "ca-AstroPh": 3,
+    "web-Stanford": 3,
+    "web-NotreDame": 3,
+    "Cora": 3,
+    "PubMed": 3,
+    "coPapersDBLP": 3,
+    "coPapersCiteseer": 3,
+}
 def seq_mkl_csr_spmm(a, x, y):
     row_ptr_s = a.crow_indices()[:-1].to(torch.int32)
     row_ptr_e = a.crow_indices()[1:].to(torch.int32)
@@ -39,7 +54,7 @@ def seq_mkl_csr_spmm(a, x, y):
 
 
 @torch.no_grad()
-def correctness(edge_index):
+def correctness(edge_index, alpha):
     mat = csr_matrix((torch.ones(edge_index.size(1)), edge_index), shape=(edge_index.max() + 1, edge_index.max() + 1))
 
     rowptr = torch.from_numpy(mat.indptr).to(torch.long)
@@ -50,7 +65,7 @@ def correctness(edge_index):
 
     values = torch.ones(row.size(0), dtype=torch.float32)
     a = torch.sparse_coo_tensor(edge_index, values, mat.shape).to_sparse_csr()
-    c = cbm_matrix(edge_index.to(torch.int32), values, alpha=3)
+    c = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha)
     c.check_format(edge_index)
 
     logger.info(f"Compression ratio: {calculate_compression_ratio(edge_index, c):.2f}")
@@ -75,13 +90,13 @@ def correctness(edge_index):
         torch.testing.assert_close(out0, out3, atol=1e-2, rtol=1e-2)
 
 
-def timing(edge_index, name):
+def timing(edge_index, name, alpha):
     mat = csr_matrix((torch.ones(edge_index.size(1)), edge_index), shape=(edge_index.max() + 1, edge_index.max() + 1))
     rowptr = torch.from_numpy(mat.indptr).to(torch.long)
 
     values = torch.ones(edge_index.size(1), dtype=torch.float32)
     a = torch.sparse_coo_tensor(edge_index, values, mat.shape).to_sparse_csr()
-    c = cbm_matrix(edge_index.to(torch.int32), values, alpha=3)
+    c = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha)
     dim_size = rowptr.size(0) - 1
     avg_row_len = edge_index.size(1) / dim_size
 
@@ -148,7 +163,7 @@ def timing(edge_index, name):
     winner = torch.cat([torch_winner, mkl_winner], dim=0).tolist()
 
     table = PrettyTable()
-    table.title = f"{name} (avg row length: {avg_row_len:.2f}, num_nodes: {a.size(0)}, num_edges: {edge_index.size(1)})"
+    table.title = f"{name} alpha: {alpha} (avg row length: {avg_row_len:.2f}, num_nodes: {a.size(0)}, num_edges: {edge_index.size(1)})"
     header = [""] + [f"{size:>5}" for size in sizes]
     table.field_names = header
     methods = ["torch_csr_spmm", "cbm_torch_csr_spmm", "mkl_csr_spmm", "cbm_mkl_csr_spmm"]
@@ -175,5 +190,5 @@ if __name__ == "__main__":
     logger = setup_logger(filename=f"{log_path}/spmm_cpu_sequential-{current_time}.log", verbose=True)
     name_edge_index_dict = download_and_return_datasets_as_dict(datasets)
     for name_i, data_i in name_edge_index_dict.items():
-        correctness(data_i.edge_index)
-        timing(data_i.edge_index, name_i)
+        correctness(data_i.edge_index, alpha_per_dataset[name_i])
+        timing(data_i.edge_index, name_i, alpha_per_dataset[name_i])
