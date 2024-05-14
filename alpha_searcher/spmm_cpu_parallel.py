@@ -55,19 +55,20 @@ def timing(edge_index, name):
         x = x.squeeze(-1) if size == 1 else x
 
         compression_ratio_list = []
-        torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list, cbm_torch_csr_spmm_time_list = [], [], [], []
-        torch_csr_spmm_time_std_list, cbm_torch_csr_matmul_time_std_list, mkl_spmm_time_std_list, cbm_mkl_spmm_time_std_list = [], [], [], []
+        # torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list = [], []
+        mkl_spmm_time_list, cbm_mkl_spmm_time_list = [], []
+        # torch_csr_spmm_time_std_list, cbm_torch_csr_matmul_time_std_list = [], []
+        mkl_spmm_time_std_list, cbm_mkl_spmm_time_std_list = [], []
 
-        t_list = []
-        y0 = a @ x
-        for _ in range(iters * len(alphas)):
-            start_time = time.perf_counter()
-            y0 = a @ x
-            t_list += [time.perf_counter() - start_time]
-        torch_spmm_time = np.median(t_list)
-        torch_spmm_time_std = np.std(t_list)
-
-        time.sleep(1)
+        # t_list = []
+        # y0 = a @ x
+        # for _ in range(iters * len(alphas)):
+        #     start_time = time.perf_counter()
+        #     y0 = a @ x
+        #     t_list += [time.perf_counter() - start_time]
+        # torch_spmm_time = np.median(t_list)
+        # torch_spmm_time_std = np.std(t_list)
+        # time.sleep(1)
 
         t_list = []
         y2 = torch.empty(dim_size, size, dtype=x.dtype)
@@ -78,7 +79,6 @@ def timing(edge_index, name):
             t_list += [time.perf_counter() - start_time]
         mkl_spmm_time = np.median(t_list)
         mkl_spmm_time_std = np.std(t_list)
-
         time.sleep(1)
 
         for alpha_i in alphas:
@@ -86,17 +86,16 @@ def timing(edge_index, name):
             compression_ratio = calculate_compression_ratio(edge_index, c)
             compression_ratio_list += [compression_ratio]
 
-            t_list = []
-            y = torch.empty(dim_size, size, dtype=x.dtype)
-            y1 = c.omp_torch_csr_matmul(x)
-            for _ in range(iters):
-                start_time = time.perf_counter()
-                y1 = c.omp_torch_csr_matmul(x)
-                t_list += [time.perf_counter() - start_time]
-            cbm_torch_csr_matmul_time = np.median(t_list)
-            cbm_torch_csr_matmul_time_std = np.std(t_list)
-
-            time.sleep(1)
+            # t_list = []
+            # y = torch.empty(dim_size, size, dtype=x.dtype)
+            # y1 = c.omp_torch_csr_matmul(x)
+            # for _ in range(iters):
+            #     start_time = time.perf_counter()
+            #     y1 = c.omp_torch_csr_matmul(x)
+            #     t_list += [time.perf_counter() - start_time]
+            # cbm_torch_csr_matmul_time = np.median(t_list)
+            # cbm_torch_csr_matmul_time_std = np.std(t_list)
+            # time.sleep(1)
 
             t_list = []
             y3 = torch.empty(dim_size, size, dtype=x.dtype)
@@ -108,30 +107,33 @@ def timing(edge_index, name):
             cbm_mkl_spmm_time = np.median(t_list)
             cbm_mkl_spmm_time_std = np.std(t_list)
 
-            torch_csr_spmm_time_list += [torch_spmm_time]
-            cbm_torch_csr_spmm_time_list += [cbm_torch_csr_matmul_time]
+            # torch_csr_spmm_time_list += [torch_spmm_time]
+            # cbm_torch_csr_spmm_time_list += [cbm_torch_csr_matmul_time]
             mkl_spmm_time_list += [mkl_spmm_time]
             cbm_mkl_spmm_time_list += [cbm_mkl_spmm_time]
 
-            torch_csr_spmm_time_std_list += [torch_spmm_time_std]
-            cbm_torch_csr_matmul_time_std_list += [cbm_torch_csr_matmul_time_std]
+            # torch_csr_spmm_time_std_list += [torch_spmm_time_std]
+            # cbm_torch_csr_matmul_time_std_list += [cbm_torch_csr_matmul_time_std]
             mkl_spmm_time_std_list += [mkl_spmm_time_std]
             cbm_mkl_spmm_time_std_list += [cbm_mkl_spmm_time_std]
 
 
-            torch.testing.assert_close(y0, y1, atol=1e-2, rtol=1e-2)
-            torch.testing.assert_close(y0, y2, atol=1e-2, rtol=1e-2)
-            torch.testing.assert_close(y0, y3, atol=1e-2, rtol=1e-2)
+            # torch.testing.assert_close(y0, y1, atol=1e-2, rtol=1e-2)
+            # torch.testing.assert_close(y0, y2, atol=1e-2, rtol=1e-2)
+            # torch.testing.assert_close(y0, y3, atol=1e-2, rtol=1e-2)
+            torch.testing.assert_close(y2, y3, atol=1e-2, rtol=1e-2)
 
-        time_tensor = torch.tensor([torch_csr_spmm_time_list,
-                                   cbm_torch_csr_spmm_time_list,
-                                   mkl_spmm_time_list,
-                                   cbm_mkl_spmm_time_list])
+        time_tensor = torch.tensor([
+            # torch_csr_spmm_time_list,
+            # cbm_torch_csr_spmm_time_list,
+            mkl_spmm_time_list,
+            cbm_mkl_spmm_time_list
+        ])
 
         winner = torch.zeros_like(time_tensor, dtype=torch.bool)
         winner[torch.arange(len(time_tensor)), time_tensor.argmin(dim=1)] = 1
         winner[0] = 0
-        winner[2] = 0
+        # winner[2] = 0
         winner = winner.tolist()
 
         table = PrettyTable()
@@ -142,13 +144,19 @@ def timing(edge_index, name):
 
         compute_improvement_percentage = lambda reference, value: ((reference - value) / reference) * 100
 
-        cbm_torch_csr_spmm_time_list = [f"{cbm_t} ({compute_improvement_percentage(torch_t, cbm_t):.1f}%)"
-                                        for cbm_t, torch_t in zip(cbm_torch_csr_spmm_time_list, torch_csr_spmm_time_list)]
+        # cbm_torch_csr_spmm_time_list = [f"{cbm_t} ({compute_improvement_percentage(torch_t, cbm_t):.1f}%)"
+        #                                 for cbm_t, torch_t in zip(cbm_torch_csr_spmm_time_list, torch_csr_spmm_time_list)]
         cbm_mkl_spmm_time_list = [f"{cbm_t} ({compute_improvement_percentage(mkl_t, cbm_t):.1f}%)"
                                   for cbm_t, mkl_t in zip(cbm_mkl_spmm_time_list, mkl_spmm_time_list)]
 
-        time_data = [torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list]
-        time_std_data = [torch_csr_spmm_time_std_list, cbm_torch_csr_matmul_time_std_list, mkl_spmm_time_std_list, cbm_mkl_spmm_time_std_list]
+        time_data = [
+            # torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list,
+            mkl_spmm_time_list, cbm_mkl_spmm_time_list
+        ]
+        time_std_data = [
+            # torch_csr_spmm_time_std_list, cbm_torch_csr_matmul_time_std_list,
+            mkl_spmm_time_std_list, cbm_mkl_spmm_time_std_list
+        ]
 
         time_and_std_data = [[f"{time} ± {std:.5f}" for time, std in zip(time_row, std_row)]
                              for time_row, std_row in zip(time_data, time_std_data)]

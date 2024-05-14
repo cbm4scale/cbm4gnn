@@ -115,7 +115,7 @@ def timing(edge_index, name, alpha):
         time.sleep(1)
 
         y = torch.empty(dim_size, size, dtype=x.dtype)
-        y1 = c.omp_torch_csr_matmul(x)
+        y1 = c.seq_torch_csr_matmul(x)
         start_time = time.perf_counter()
         for _ in range(iters):
             y1 = c.seq_torch_csr_matmul(x)
