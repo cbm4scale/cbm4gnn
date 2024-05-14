@@ -21,7 +21,7 @@ from benchmark.utility import underline, bold, download_and_return_datasets_as_d
 from logger import setup_logger
 
 number_of_layers = 2
-hidden_channels = [128, 256, 512]
+hidden_channels = [128, 256, 512, 1024, 2048]
 datasets = [
     ("SNAP", "ca-HepPh"),
     ("SNAP", "cit-HepTh"),
@@ -32,9 +32,6 @@ datasets = [
     ("Planetoid", "PubMed"),
     ("DIMACS10", "coPapersDBLP"),
     ("DIMACS10", "coPapersCiteseer"),
-    ("TKK", "s4dkt3m2"),
-    ("TKK", "g3rmt3m3"),
-    ("FIDAP", "ex26"),
 ]
 
 

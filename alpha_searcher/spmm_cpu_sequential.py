@@ -16,7 +16,7 @@ from benchmark.utility import underline, bold, download_and_return_datasets_as_d
 from logger import setup_logger
 
 iters = 50
-sizes = [512, 1024]
+sizes = [128, 256, 512, 1024, 2048]
 alphas = [0, 1, 2, 4, 8, 16, 32, 64, 128]
 datasets = [
     ("SNAP", "ca-HepPh"),
