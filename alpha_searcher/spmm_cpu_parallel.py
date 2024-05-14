@@ -10,7 +10,7 @@ from scipy.sparse import csr_matrix
 
 from cbm.cbm import cbm_matrix
 from cbm import cbm_mkl_cpp as cbm_
-from benchmark.utility import underline, bold, download_and_return_datasets_as_dict
+from benchmark.utility import underline, bold, download_and_return_datasets_as_dict, calculate_compression_ratio
 from logger import setup_logger
 
 iters = 50
@@ -46,24 +46,40 @@ def timing(edge_index, name):
     avg_row_len = edge_index.size(1) / dim_size
 
     for size in sizes:
+        x = torch.randn((mat.shape[0], size))
+        x = x.squeeze(-1) if size == 1 else x
+
+        compression_ratio_list = []
         torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list, cbm_torch_csr_spmm_time_list = [], [], [], []
-        torch_csr_spmm_time_std, cbm_torch_csr_matmul_time_std, mkl_spmm_time_std, cbm_mkl_spmm_time_std = [], [], [], []
+        torch_csr_spmm_time_std_list, cbm_torch_csr_matmul_time_std_list, mkl_spmm_time_std_list, cbm_mkl_spmm_time_std_list = [], [], [], []
+
+        t_list = []
+        y0 = a @ x
+        for _ in range(iters * len(alphas)):
+            start_time = time.perf_counter()
+            y0 = a @ x
+            t_list += [time.perf_counter() - start_time]
+        torch_spmm_time = np.median(t_list)
+        torch_spmm_time_std = np.std(t_list)
+
+        time.sleep(1)
+
+        t_list = []
+        y2 = torch.empty(dim_size, size, dtype=x.dtype)
+        omp_mkl_csr_spmm(a, x, y2)
+        for _ in range(iters * len(alphas)):
+            start_time = time.perf_counter()
+            omp_mkl_csr_spmm(a, x, y2)
+            t_list += [time.perf_counter() - start_time]
+        mkl_spmm_time = np.median(t_list)
+        mkl_spmm_time_std = np.std(t_list)
+
+        time.sleep(1)
+
         for alpha_i in alphas:
             c = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha_i)
-
-            x = torch.randn((mat.shape[0], size))
-            x = x.squeeze(-1) if size == 1 else x
-
-            t_list = []
-            y0 = a @ x
-            for _ in range(iters):
-                start_time = time.perf_counter()
-                y0 = a @ x
-                t_list += [time.perf_counter() - start_time]
-            torch_spmm_time = np.median(t_list)
-            torch_spmm_time_std = np.std(t_list)
-
-            time.sleep(1)
+            compression_ratio = calculate_compression_ratio(edge_index, c)
+            compression_ratio_list += [compression_ratio]
 
             t_list = []
             y = torch.empty(dim_size, size, dtype=x.dtype)
@@ -74,18 +90,6 @@ def timing(edge_index, name):
                 t_list += [time.perf_counter() - start_time]
             cbm_torch_csr_matmul_time = np.median(t_list)
             cbm_torch_csr_matmul_time_std = np.std(t_list)
-
-            time.sleep(1)
-
-            t_list = []
-            y2 = torch.empty(dim_size, size, dtype=x.dtype)
-            omp_mkl_csr_spmm(a, x, y2)
-            for _ in range(iters):
-                start_time = time.perf_counter()
-                omp_mkl_csr_spmm(a, x, y2)
-                t_list += [time.perf_counter() - start_time]
-            mkl_spmm_time = np.median(t_list)
-            mkl_spmm_time_std = np.std(t_list)
 
             time.sleep(1)
 
@@ -104,18 +108,15 @@ def timing(edge_index, name):
             mkl_spmm_time_list += [mkl_spmm_time]
             cbm_mkl_spmm_time_list += [cbm_mkl_spmm_time]
 
-            torch_csr_spmm_time_std += [torch_spmm_time_std]
-            cbm_torch_csr_matmul_time_std += [cbm_torch_csr_matmul_time_std]
-            mkl_spmm_time_std += [mkl_spmm_time_std]
-            cbm_mkl_spmm_time_std += [cbm_mkl_spmm_time_std]
+            torch_csr_spmm_time_std_list += [torch_spmm_time_std]
+            cbm_torch_csr_matmul_time_std_list += [cbm_torch_csr_matmul_time_std]
+            mkl_spmm_time_std_list += [mkl_spmm_time_std]
+            cbm_mkl_spmm_time_std_list += [cbm_mkl_spmm_time_std]
 
 
             torch.testing.assert_close(y0, y1, atol=1e-2, rtol=1e-2)
             torch.testing.assert_close(y0, y2, atol=1e-2, rtol=1e-2)
             torch.testing.assert_close(y0, y3, atol=1e-2, rtol=1e-2)
-            del x
-
-        del rowptr, mat
 
         time_tensor = torch.tensor([torch_csr_spmm_time_list,
                                    cbm_torch_csr_spmm_time_list,
@@ -142,9 +143,12 @@ def timing(edge_index, name):
                                   for cbm_t, mkl_t in zip(cbm_mkl_spmm_time_list, mkl_spmm_time_list)]
 
         time_data = [torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list]
-        time_std_data = [torch_csr_spmm_time_std, cbm_torch_csr_matmul_time_std, mkl_spmm_time_std, cbm_mkl_spmm_time_std]
+        time_std_data = [torch_csr_spmm_time_std_list, cbm_torch_csr_matmul_time_std_list, mkl_spmm_time_std_list, cbm_mkl_spmm_time_std_list]
 
-        time_and_std_data = [f"{t:.5f} ± {std:.5f}" for t, std in zip(time_data, time_std_data)]
+        time_and_std_data = [[f"{time} ± {std:.5f}" for time, std in zip(time_row, std_row)]
+                             for time_row, std_row in zip(time_data, time_std_data)]
+
+        table.add_row([bold("Compression Ratio")] + [bold(f"{c:.2f}") for c in compression_ratio_list])
         for method, times, wins in zip(methods, time_and_std_data, winner):
             row = [method, ] + [f"{underline(bold(t, w), w)}" for t, w in zip(times, wins)]
             table.add_row(row)
