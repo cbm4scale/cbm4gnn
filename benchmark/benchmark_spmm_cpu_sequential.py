@@ -33,17 +33,17 @@ datasets = [
 
 
 alpha_per_dataset = {
-    "ca-HepPh": 3,
-    "ca-HepTh": 3,
-    "cit-HepPh": 3,
-    "cit-HepTh": 3,
-    "ca-AstroPh": 3,
-    "web-Stanford": 3,
-    "web-NotreDame": 3,
-    "Cora": 3,
-    "PubMed": 3,
-    "coPapersDBLP": 3,
-    "coPapersCiteseer": 3,
+    "ca-HepPh": 4,
+    "ca-HepTh": 2,
+    "cit-HepPh": 4,
+    "cit-HepTh": 4,
+    "ca-AstroPh": 2,
+    "web-Stanford": 1,
+    "web-NotreDame": 4,
+    "Cora": 4,
+    "PubMed": 4,
+    "coPapersDBLP": 4,
+    "coPapersCiteseer": 2,
 }
 def seq_mkl_csr_spmm(a, x, y):
     row_ptr_s = a.crow_indices()[:-1].to(torch.int32)

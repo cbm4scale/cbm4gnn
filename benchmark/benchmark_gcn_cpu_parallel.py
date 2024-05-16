@@ -38,17 +38,17 @@ datasets = [
 
 
 alpha_per_dataset = {
-    "ca-HepPh": 3,
-    "ca-HepTh": 3,
-    "cit-HepPh": 3,
-    "cit-HepTh": 3,
-    "ca-AstroPh": 3,
-    "web-Stanford": 3,
-    "web-NotreDame": 3,
-    "Cora": 3,
-    "PubMed": 3,
-    "coPapersDBLP": 3,
-    "coPapersCiteseer": 3,
+    "ca-HepPh": 64,
+    "ca-HepTh": 64,
+    "cit-HepPh": 8,
+    "cit-HepTh": 8,
+    "ca-AstroPh": 8,
+    "web-Stanford": 16,
+    "web-NotreDame": 32,
+    "Cora": 16,
+    "PubMed": 16,
+    "coPapersDBLP": 16,
+    "coPapersCiteseer": 16,
 }
 
 
