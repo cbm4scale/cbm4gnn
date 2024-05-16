@@ -24,15 +24,18 @@ if __name__ == "__main__":
     ax2 = ax1.twinx()
     lineplot = sns.lineplot(x="Alpha", y="Compression Ratio (Right)", data=data, marker="o", ax=ax2, color="r", label="Compression Ratio (Right)")
 
+    ax1.set_ylabel(r"Relative Speed-up Improvement Percentage (\%)", fontsize=18)
     ax2.set_ylabel(r"\textbf{Compression Ratio}", fontsize=18)
     ax1.set_xlabel(r"\textbf{Alpha}", fontsize=18)
-    ax1.set_ylabel(r"\textbf{Improvement Percentage (\%)}", fontsize=18)
     ax1.tick_params(labelsize=18)
     ax2.tick_params(labelsize=18)
 
+    # ax1.set_ylabel(r"", fontsize=18)
+    # ax2.set_ylabel(r"", fontsize=18)
+
     lines, labels = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax2.legend(lines + lines2, labels + labels2, loc="upper left")
+    ax2.legend(lines + lines2, labels + labels2, loc="upper right", fontsize=15)
     ax1.get_legend().remove()
     ax2.get_legend().remove()
     plt.show()
