@@ -1,11 +1,14 @@
-from torch import diag, float32, Tensor, zeros, ones, arange, cat, sparse_coo_tensor
+from torch import float32, Tensor, zeros, ones, arange, cat, sparse_coo_tensor, sparse_csr
 
 
 def normalize_torch_adj(a: Tensor) -> Tensor:
     deg = a.sum(dim=0, keepdim=True)
-    deg_inv_sqrt = deg.to_dense().pow_(-0.5)
-    deg_inv_sqrt = diag(deg_inv_sqrt.squeeze())
-    deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
+    deg_inv_sqrt = deg.to_dense().pow_(-0.5).squeeze()
+    indices = arange(deg.size(1), device=deg.device).repeat(2, 1)
+    deg_inv_sqrt = sparse_coo_tensor(indices, deg_inv_sqrt)
+    if a.layout == sparse_csr:
+        deg_inv_sqrt = deg_inv_sqrt.to_sparse_csr()
+    # deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
     return (deg_inv_sqrt @ a @ deg_inv_sqrt).to_sparse_csr()
 
 
