@@ -13,18 +13,19 @@ from cbm.cbm import cbm_matrix
 from cbm import cbm_mkl_cpp as cbm_
 from cbm.utility import check_edge_index
 from benchmark.utility import underline, bold, download_and_return_datasets_as_dict, calculate_compression_ratio
+from gnns.utility import normalize_torch_adj
 from logger import setup_logger
 
 iters = 50
-sizes = [128, 256, 512, 1024, 2048]
+sizes = [100, 500, 1000]
 datasets = [
     ("SNAP", "ca-HepPh"),
-    ("SNAP", "ca-HepTh"),
-    ("SNAP", "cit-HepPh"),
-    ("SNAP", "cit-HepTh"),
+    # ("SNAP", "ca-HepTh"),
+    # ("SNAP", "cit-HepPh"),
+    # ("SNAP", "cit-HepTh"),
     ("SNAP", "ca-AstroPh"),
-    ("SNAP", "web-Stanford"),
-    ("SNAP", "web-NotreDame"),
+    # ("SNAP", "web-Stanford"),
+    # ("SNAP", "web-NotreDame"),
     ("Planetoid", "Cora"),
     ("Planetoid", "PubMed"),
     ("DIMACS10", "coPapersDBLP"),
@@ -34,12 +35,12 @@ datasets = [
 
 alpha_per_dataset = {
     "ca-HepPh": 4,
-    "ca-HepTh": 2,
-    "cit-HepPh": 4,
-    "cit-HepTh": 4,
+    # "ca-HepTh": 2,
+    # "cit-HepPh": 4,
+    # "cit-HepTh": 4,
     "ca-AstroPh": 2,
-    "web-Stanford": 1,
-    "web-NotreDame": 4,
+    # "web-Stanford": 1,
+    # "web-NotreDame": 4,
     "Cora": 4,
     "PubMed": 4,
     "coPapersDBLP": 4,
@@ -64,30 +65,42 @@ def correctness(edge_index, alpha):
     check_edge_index(edge_index)
 
     values = torch.ones(row.size(0), dtype=torch.float32)
-    a = torch.sparse_coo_tensor(edge_index, values, mat.shape).to_sparse_csr()
-    c = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha)
-    c.check_format(edge_index)
+    a_un_normalized = torch.sparse_coo_tensor(edge_index, values, mat.shape).to_sparse_csr()
+    a_normalized = normalize_torch_adj(a_un_normalized)
 
-    logger.info(f"Compression ratio: {calculate_compression_ratio(edge_index, c):.2f}")
+
+    c_un_normalized = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha)
+    c_normalized = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha, normalized=True)
+
+    c_un_normalized.check_format(edge_index)
+    c_normalized.check_format(edge_index)
+
+    logger.info(f"Compression ratio: {calculate_compression_ratio(edge_index, c_un_normalized):.2f}")
     dim_size = rowptr.size(0) - 1
 
     for size in sizes:
         x = torch.randn((mat.shape[0], size))
         x = x.squeeze(-1) if size == 1 else x
 
-        out0 = a @ x
+        out0 = a_un_normalized @ x
 
         out1 = torch.empty(dim_size, size, dtype=x.dtype)
-        seq_mkl_csr_spmm(a, x, out1)
+        seq_mkl_csr_spmm(a_un_normalized, x, out1)
 
         out2 = torch.empty(dim_size, size, dtype=x.dtype)
-        c.seq_mkl_csr_spmm_update(x, out2)
+        c_un_normalized.seq_mkl_csr_spmm_update(x, out2)
 
-        out3 = c.seq_torch_csr_matmul(x)
+        # out3 = c.seq_torch_csr_matmul(x)
+
+        out4 = a_normalized @ x
+
+        out5 = torch.empty(dim_size, size, dtype=x.dtype)
+        c_normalized.seq_mkl_csr_fused_spmm_update(x, out5)
 
         torch.testing.assert_close(out0, out1, atol=1e-2, rtol=1e-2)
         torch.testing.assert_close(out0, out2, atol=1e-2, rtol=1e-2)
-        torch.testing.assert_close(out0, out3, atol=1e-2, rtol=1e-2)
+        # torch.testing.assert_close(out0, out3, atol=1e-2, rtol=1e-2)
+        torch.testing.assert_close(out4, out5, atol=1e-2, rtol=1e-2)
 
 
 def timing(edge_index, name, alpha):
@@ -95,87 +108,96 @@ def timing(edge_index, name, alpha):
     rowptr = torch.from_numpy(mat.indptr).to(torch.long)
 
     values = torch.ones(edge_index.size(1), dtype=torch.float32)
-    a = torch.sparse_coo_tensor(edge_index, values, mat.shape).to_sparse_csr()
-    c = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha)
+    a_un_normalized = torch.sparse_coo_tensor(edge_index, values, mat.shape).to_sparse_csr()
+    a_normalized = normalize_torch_adj(a_un_normalized)
+
+    c_un_normalized = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha)
+    c_normalized = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha, normalized=True)
+
     dim_size = rowptr.size(0) - 1
     avg_row_len = edge_index.size(1) / dim_size
 
-    torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list, cbm_torch_csr_spmm_time_list = [], [], [], []
+    # torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list, cbm_torch_csr_spmm_time_list = [], [], [], []
+    un_normalized_csr_spmm_time_list, un_normalized_cbm_spmm_time_list, normalized_csr_spmm_time_list, normalized_cbm_spmm_time_list = [], [], [], []
 
     for size in sizes:
         x = torch.randn((mat.shape[0], size))
         x = x.squeeze(-1) if size == 1 else x
 
-        y0 = a @ x
+        y0 = torch.empty(dim_size, size, dtype=x.dtype)
+        seq_mkl_csr_spmm(a_un_normalized, x, y0)
         start_time = time.perf_counter()
         for _ in range(iters):
-            y0 = a @ x
-        torch_spmm_time = (time.perf_counter() - start_time) / iters
+            seq_mkl_csr_spmm(a_un_normalized, x, y0)
+        csr_un_normalized_spmm_time = (time.perf_counter() - start_time) / iters
 
         time.sleep(1)
 
-        y = torch.empty(dim_size, size, dtype=x.dtype)
-        y1 = c.seq_torch_csr_matmul(x)
+        y1 = torch.empty(dim_size, size, dtype=x.dtype)
+        c_un_normalized.seq_mkl_csr_spmm_update(x, y1)
         start_time = time.perf_counter()
         for _ in range(iters):
-            y1 = c.seq_torch_csr_matmul(x)
-        cbm_torch_csr_matmul_time = (time.perf_counter() - start_time) / iters
+            c_un_normalized.seq_mkl_csr_spmm_update(x, y1)
+        cbm_un_normalized_spmm_time = (time.perf_counter() - start_time) / iters
 
         time.sleep(1)
 
         y2 = torch.empty(dim_size, size, dtype=x.dtype)
-        seq_mkl_csr_spmm(a, x, y2)
+        seq_mkl_csr_spmm(a_normalized, x, y2)
         start_time = time.perf_counter()
         for _ in range(iters):
-            seq_mkl_csr_spmm(a, x, y2)
-        mkl_spmm_time = (time.perf_counter() - start_time) / iters
+            seq_mkl_csr_spmm(a_normalized, x, y2)
+        csr_normalized_spmm_time = (time.perf_counter() - start_time) / iters
 
         time.sleep(1)
 
         y3 = torch.empty(dim_size, size, dtype=x.dtype)
-        c.seq_mkl_csr_spmm_update(x, y3)
+        c_normalized.seq_mkl_csr_fused_spmm_update(x, y3)
         start_time = time.perf_counter()
         for _ in range(iters):
-            c.seq_mkl_csr_spmm_update(x, y3)
-        cbm_mkl_spmm_time = (time.perf_counter() - start_time) / iters
+            c_normalized.seq_mkl_csr_fused_spmm_update(x, y3)
+        cbm_normalized_spmm_time = (time.perf_counter() - start_time) / iters
 
-        torch_csr_spmm_time_list += [torch_spmm_time]
-        cbm_torch_csr_spmm_time_list += [cbm_torch_csr_matmul_time]
-        mkl_spmm_time_list += [mkl_spmm_time]
-        cbm_mkl_spmm_time_list += [cbm_mkl_spmm_time]
+        un_normalized_csr_spmm_time_list += [csr_un_normalized_spmm_time]
+        un_normalized_cbm_spmm_time_list += [cbm_un_normalized_spmm_time]
+        normalized_csr_spmm_time_list += [csr_normalized_spmm_time]
+        normalized_cbm_spmm_time_list += [cbm_normalized_spmm_time]
 
         torch.testing.assert_close(y0, y1, atol=1e-2, rtol=1e-2)
-        torch.testing.assert_close(y0, y2, atol=1e-2, rtol=1e-2)
-        torch.testing.assert_close(y0, y3, atol=1e-2, rtol=1e-2)
+        torch.testing.assert_close(y2, y3, atol=1e-2, rtol=1e-2)
         del x
 
     del rowptr, mat, values
 
-    torch_time = torch.tensor([torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list])
-    mkl_time = torch.tensor([mkl_spmm_time_list, cbm_mkl_spmm_time_list])
+    # torch_time = torch.tensor([torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list])
+    un_normalized_time = torch.tensor([un_normalized_csr_spmm_time_list, un_normalized_cbm_spmm_time_list])
+    normalized_time = torch.tensor([normalized_csr_spmm_time_list, normalized_cbm_spmm_time_list])
 
-    torch_winner = torch.zeros_like(torch_time, dtype=torch.bool)
-    mkl_winner = torch.zeros_like(mkl_time, dtype=torch.bool)
+    # torch_winner = torch.zeros_like(torch_time, dtype=torch.bool)
+    un_normalized_winner = torch.zeros_like(un_normalized_time, dtype=torch.bool)
+    normalized_winner = torch.zeros_like(normalized_time, dtype=torch.bool)
 
-    torch_winner[torch_time.argmin(dim=0), torch.arange(len(sizes))] = 1
-    mkl_winner[mkl_time.argmin(dim=0), torch.arange(len(sizes))] = 1
+    # torch_winner[torch_time.argmin(dim=0), torch.arange(len(sizes))] = 1
+    un_normalized_winner[un_normalized_time.argmin(dim=0), torch.arange(len(sizes))] = 1
+    normalized_winner[normalized_time.argmin(dim=0), torch.arange(len(sizes))] = 1
 
-    winner = torch.cat([torch_winner, mkl_winner], dim=0).tolist()
+    # winner = torch.cat([torch_winner, mkl_winner], dim=0).tolist()
+    winner = torch.cat([un_normalized_winner, normalized_winner], dim=0).tolist()
 
     table = PrettyTable()
-    table.title = f"{name} alpha: {alpha} (avg row length: {avg_row_len:.2f}, num_nodes: {a.size(0)}, num_edges: {edge_index.size(1)})"
+    table.title = f"{name} alpha: {alpha} (avg row length: {avg_row_len:.2f}, num_nodes: {a_un_normalized.size(0)}, num_edges: {edge_index.size(1)})"
     header = [""] + [f"{size:>5}" for size in sizes]
     table.field_names = header
-    methods = ["torch_csr_spmm", "cbm_torch_csr_spmm", "mkl_csr_spmm", "cbm_mkl_csr_spmm"]
+    methods = ["csr_spmm", "cbm_spmm", "csr_spmm (norm)", "cbm_spmm (norm)"]
 
     compute_improvement_percentage = lambda reference, value: ((reference - value) / reference) * 100
 
-    cbm_torch_csr_spmm_time_list = [f"{cbm_t} ({compute_improvement_percentage(torch_t, cbm_t):.1f}%)"
-                                    for cbm_t, torch_t in zip(cbm_torch_csr_spmm_time_list, torch_csr_spmm_time_list)]
-    cbm_mkl_spmm_time_list = [f"{cbm_t} ({compute_improvement_percentage(mkl_t, cbm_t):.1f}%)"
-                              for cbm_t, mkl_t in zip(cbm_mkl_spmm_time_list, mkl_spmm_time_list)]
+    un_normalized_cbm_spmm_time_list = [f"{cbm_t} ({compute_improvement_percentage(csr_t, cbm_t):.1f}%)"
+                                        for cbm_t, csr_t in zip(un_normalized_cbm_spmm_time_list, un_normalized_csr_spmm_time_list)]
+    normalized_cbm_spmm_time_list = [f"{cbm_t} ({compute_improvement_percentage(csr_t, cbm_t):.1f}%)"
+                                     for cbm_t, csr_t in zip(normalized_cbm_spmm_time_list, normalized_csr_spmm_time_list)]
 
-    time_data = [torch_csr_spmm_time_list, cbm_torch_csr_spmm_time_list, mkl_spmm_time_list, cbm_mkl_spmm_time_list]
+    time_data = [un_normalized_csr_spmm_time_list, un_normalized_cbm_spmm_time_list, normalized_csr_spmm_time_list, normalized_cbm_spmm_time_list]
     for method, times, wins in zip(methods, time_data, winner):
         row = [method, ] + [f"{underline(bold(t, w), w)}" for t, w in zip(times, wins)]
         table.add_row(row)
