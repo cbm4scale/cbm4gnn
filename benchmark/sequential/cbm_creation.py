@@ -23,13 +23,20 @@ datasets = [
 
 
 def benchmark_datasets(name_edge_index_dict):
-    table = PrettyTable()
-    table.title = "CBM Matrix Creation Benchmark Across Datasets"
     headers = ["Dataset/Alpha"] + [f"Alpha {alpha}" for alpha in alphas]
-    table.field_names = headers
+
+    runtime_table = PrettyTable()
+    runtime_table.title = "CBM Matrix Creation Time Benchmark Across Datasets"
+    runtime_table.field_names = headers
+
+    compression_table = PrettyTable()
+    compression_table.title = "CBM Matrix Compression Ratio Benchmark Across Datasets"
+    compression_table.field_names = headers
 
     for name, data in name_edge_index_dict.items():
-        row = [name]
+        runtime_row = [name]
+        compression_row = [name]
+
         edge_index = data.edge_index
         values = torch.ones(edge_index.size(1), dtype=torch.float32)
         for alpha_i in alphas:
@@ -38,12 +45,19 @@ def benchmark_datasets(name_edge_index_dict):
                 start_time = time.perf_counter()
                 c = cbm_matrix(edge_index.to(torch.int32), values, alpha=alpha_i)
                 t_list.append(time.perf_counter() - start_time)
-            compression_ratio = calculate_compression_ratio(edge_index, c)
-            cbm_creation_time = np.median(t_list)
+
+            cbm_creation_time = np.mean(t_list)
             cbm_creation_time_std = np.std(t_list)
-            row.append(f"{cbm_creation_time:.5f} ± {cbm_creation_time_std:.3f}")
-        table.add_row(row)
-    print(table)
+            compression_ratio = calculate_compression_ratio(edge_index, c)
+
+            runtime_row.append(f"{cbm_creation_time:.5f} ± {cbm_creation_time_std:.3f}")
+            compression_row.append(f"{compression_ratio:.5f}")
+
+        runtime_table.add_row(runtime_row)
+        compression_table.add_row(compression_row)
+
+    print(runtime_table)
+    print(compression_table)
 
 
 if __name__ == "__main__":
