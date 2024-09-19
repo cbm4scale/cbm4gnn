@@ -1,3 +1,7 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "16"
+os.environ["GOTO_NUM_THREADS"] = "0-15"
+
 from datetime import datetime
 from os import makedirs
 from os.path import exists

@@ -1,5 +1,6 @@
 from torch import sparse_coo_tensor, float32, ones
-from torch_geometric.datasets import Planetoid, Amazon, SuiteSparseMatrixCollection
+from torch_geometric.data import Batch
+from torch_geometric.datasets import Planetoid, Amazon, SuiteSparseMatrixCollection, Reddit, TUDataset, PPI, Coauthor, JODIEDataset
 
 
 def underline(text, flag=True):
@@ -20,15 +21,25 @@ def download_only_datasets(list_of_datasets_groups_and_names):
 
 
 def download_and_return_datasets_as_dict(list_of_datasets_groups_and_names):
-    return {
-        name:
-            Planetoid(root="../data", name=name).data
-            if group == "Planetoid" else
-            Amazon(root="../data", name=name).data
-            if group == "Amazon" else
-            SuiteSparseMatrixCollection(root="../data", name=name, group=group).data
-        for group, name in list_of_datasets_groups_and_names
-    }
+    datasets_dict = {}
+    for group, name in list_of_datasets_groups_and_names:
+        if group == "Planetoid":
+            datasets_dict[name] = Planetoid(root="../data", name=name).data
+        elif group == "Coauthor":
+            datasets_dict[name] = Coauthor(root="../data", name=name).data
+        elif group == "Amazon":
+            datasets_dict[name] = Amazon(root="../data", name=name).data
+        elif group == "Reddit":
+            datasets_dict[name] = Reddit(root="../data").data
+        elif group == "TUDataset":
+            datasets_dict[name] = Batch.from_data_list(TUDataset(root="../data", name=name))
+        elif group == "PPI":
+            datasets_dict[name] = Batch.from_data_list(PPI(root="../data"))
+        elif group == "JODIEDataset":
+            datasets_dict[name] = JODIEDataset(root="../data", name=name).data
+        else:
+            datasets_dict[name] = SuiteSparseMatrixCollection(root="../data", name=name, group=group).data
+    return datasets_dict
 
 
 def calculate_compression_ratio(edge_index, c_matrix):

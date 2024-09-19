@@ -1,9 +1,15 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["GOTO_NUM_THREADS"] = "0-1"
+
 import time
 from datetime import datetime
 from os import makedirs
 from os.path import exists
 
 import torch
+torch.set_num_threads(1)
+
 from prettytable import PrettyTable
 from scipy.sparse import csr_matrix
 
@@ -15,47 +21,39 @@ from gnns.utility import normalize_torch_adj
 from logger import setup_logger
 
 iters = 50
-sizes = [100, 500, 1000]
+sizes = [500]
 datasets = [
     ("SNAP", "ca-HepPh"),
-    # ("SNAP", "ca-HepTh"),
-    # ("SNAP", "cit-HepPh"),
-    # ("SNAP", "cit-HepTh"),
-    ("SNAP", "ca-AstroPh"),
-    # ("SNAP", "web-Stanford"),
-    # ("SNAP", "web-NotreDame"),
-    ("Planetoid", "Cora"),
-    ("Planetoid", "PubMed"),
-    ("DIMACS10", "coPapersDBLP"),
-    ("DIMACS10", "coPapersCiteseer"),
+    # ("SNAP", "ca-AstroPh"),
+    # ("Planetoid", "Cora"),
+    # ("Planetoid", "PubMed"),
+    # ("DIMACS10", "coPapersDBLP"),
+    # ("DIMACS10", "coPapersCiteseer"),
+    # ("Reddit", "Reddit"),
 ]
 
 
 alpha_per_dataset = {
-    "ca-HepPh": 64,
-    # "ca-HepTh": 64,
-    # "cit-HepPh": 8,
-    # "cit-HepTh": 8,
-    "ca-AstroPh": 8,
-    # "web-Stanford": 16,
-    # "web-NotreDame": 32,
-    "Cora": 16,
-    "PubMed": 16,
-    "coPapersDBLP": 16,
-    "coPapersCiteseer": 16,
+    "ca-HepPh": 4,
+    # "ca-AstroPh": 2,
+    # "Cora": 4,
+    # "PubMed": 4,
+    # "coPapersDBLP": 4,
+    # "coPapersCiteseer": 2,
+    # "Reddit": 16,
 }
-
-def omp_mkl_csr_spmm(a, x, y):
+def seq_mkl_csr_spmm(a, x, y):
     row_ptr_s = a.crow_indices()[:-1].to(torch.int32)
     row_ptr_e = a.crow_indices()[1:].to(torch.int32)
     col_ptr = a.col_indices().to(torch.int32)
     val_ptr = a.values().to(torch.float32)
-    cbm_.omp_s_spmm_csr_int32(row_ptr_s, row_ptr_e, col_ptr, val_ptr, x, y)
+    cbm_.seq_s_spmm_csr_int32(row_ptr_s, row_ptr_e, col_ptr, val_ptr, x, y)
 
 
 @torch.no_grad()
 def correctness(edge_index, alpha):
     mat = csr_matrix((torch.ones(edge_index.size(1)), edge_index), shape=(edge_index.max() + 1, edge_index.max() + 1))
+
     rowptr = torch.from_numpy(mat.indptr).to(torch.long)
     row = torch.from_numpy(mat.tocoo().row).to(torch.long)
     col = torch.from_numpy(mat.tocoo().col).to(torch.long)
@@ -83,17 +81,17 @@ def correctness(edge_index, alpha):
         out0 = a_un_normalized @ x
 
         out1 = torch.empty(dim_size, size, dtype=x.dtype)
-        omp_mkl_csr_spmm(a_un_normalized, x, out1)
+        seq_mkl_csr_spmm(a_un_normalized, x, out1)
 
         out2 = torch.empty(dim_size, size, dtype=x.dtype)
-        c_un_normalized.omp_mkl_csr_spmm_update(x, out2)
+        c_un_normalized.seq_mkl_csr_spmm_update(x, out2)
 
-        # out3 = c.omp_torch_csr_matmul(x)
+        # out3 = c.seq_torch_csr_matmul(x)
 
         out4 = a_normalized @ x
 
         out5 = torch.empty(dim_size, size, dtype=x.dtype)
-        c_normalized.omp_mkl_csr_fused_spmm_update(x, out5)
+        c_normalized.seq_mkl_csr_fused_spmm_update(x, out5)
 
         torch.testing.assert_close(out0, out1, atol=1e-2, rtol=1e-2)
         torch.testing.assert_close(out0, out2, atol=1e-2, rtol=1e-2)
@@ -123,37 +121,37 @@ def timing(edge_index, name, alpha):
         x = x.squeeze(-1) if size == 1 else x
 
         y0 = torch.empty(dim_size, size, dtype=x.dtype)
-        omp_mkl_csr_spmm(a_un_normalized, x, y0)
+        seq_mkl_csr_spmm(a_un_normalized, x, y0)
         start_time = time.perf_counter()
         for _ in range(iters):
-            omp_mkl_csr_spmm(a_un_normalized, x, y0)
+            seq_mkl_csr_spmm(a_un_normalized, x, y0)
         csr_un_normalized_spmm_time = (time.perf_counter() - start_time) / iters
 
         time.sleep(1)
 
         y1 = torch.empty(dim_size, size, dtype=x.dtype)
-        c_un_normalized.omp_mkl_csr_spmm_update(x, y1)
+        c_un_normalized.seq_mkl_csr_spmm_update(x, y1)
         start_time = time.perf_counter()
         for _ in range(iters):
-            c_un_normalized.omp_mkl_csr_spmm_update(x, y1)
+            c_un_normalized.seq_mkl_csr_spmm_update(x, y1)
         cbm_un_normalized_spmm_time = (time.perf_counter() - start_time) / iters
 
         time.sleep(1)
 
         y2 = torch.empty(dim_size, size, dtype=x.dtype)
-        omp_mkl_csr_spmm(a_normalized, x, y2)
+        seq_mkl_csr_spmm(a_normalized, x, y2)
         start_time = time.perf_counter()
         for _ in range(iters):
-            omp_mkl_csr_spmm(a_normalized, x, y2)
+            seq_mkl_csr_spmm(a_normalized, x, y2)
         csr_normalized_spmm_time = (time.perf_counter() - start_time) / iters
 
         time.sleep(1)
 
         y3 = torch.empty(dim_size, size, dtype=x.dtype)
-        c_normalized.omp_mkl_csr_fused_spmm_update(x, y3)
+        c_normalized.seq_mkl_csr_fused_spmm_update(x, y3)
         start_time = time.perf_counter()
         for _ in range(iters):
-            c_normalized.omp_mkl_csr_fused_spmm_update(x, y3)
+            c_normalized.seq_mkl_csr_fused_spmm_update(x, y3)
         cbm_normalized_spmm_time = (time.perf_counter() - start_time) / iters
 
         un_normalized_csr_spmm_time_list += [csr_un_normalized_spmm_time]
@@ -207,7 +205,7 @@ if __name__ == "__main__":
     if not exists(log_path):
         makedirs(log_path)
     current_time = datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
-    logger = setup_logger(filename=f"{log_path}/spmm_cpu_parallel-{current_time}.log", verbose=True)
+    logger = setup_logger(filename=f"{log_path}/spmm_cpu_sequential-{current_time}.log", verbose=True)
     name_edge_index_dict = download_and_return_datasets_as_dict(datasets)
     for name_i, data_i in name_edge_index_dict.items():
         correctness(data_i.edge_index, alpha_per_dataset[name_i])
