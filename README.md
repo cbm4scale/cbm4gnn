@@ -1,5 +1,6 @@
 # cbm4gnn
 Repository for accelerating unweighted graph neural networks via the compressed binary matrix format. 
+(The code in this repository may be subject to future refactoring.)
 
 ## Installation
 ```bash
