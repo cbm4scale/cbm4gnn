@@ -1,75 +1,44 @@
-from torch_geometric.nn import Linear
+from torch import stack, int32, ones, ones_like, empty
+from torch.nn import Module, Linear, Parameter
 
-from gnns.message_passing import (CBMSequentialMKLCSRSparseMatrixMessagePassing,
-                                  CBMParallelMKLCSRSparseMatrixMessagePassing,
-                                  CBMSequentialTorchCSRSparseMatrixMessagePassing,
-                                  CBMParallelTorchCSRSparseMatrixMessagePassing,
-                                  )
+from cbm.cbm4gcn import cbm4gcn
 
 
-class CBMSequentialMKLCSRSparseMatrixGCN(CBMSequentialMKLCSRSparseMatrixMessagePassing):
-    def __init__(self, in_channels, out_channels):
-        super(CBMSequentialMKLCSRSparseMatrixGCN, self).__init__(normalize=True)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
-        self.reset_parameters()
+class CBMSparseMatrixGCN(Module):
+    def __init__(self, in_channels, out_channels, cached: bool = True, alpha: int = 0):
+        super(CBMSparseMatrixGCN, self).__init__()
+        self.alpha = alpha
+        self.cached = cached
+        self.cached_a = None
+        self.cached_empty_tensor = None
+        self.linear = Linear(in_channels, out_channels, bias=False)
+        self.linear.weight = Parameter(ones_like(self.linear.weight))
+
 
     def reset_parameters(self):
-        self.lin.reset_parameters()
+        self.linear.reset_parameters()
+        self.linear.weight = Parameter(ones_like(self.linear.weight))
+        self.cached_a = None
+        self.cached_empty_tensor = None
 
-    def forward(self, x, edge_index):
-        x = self.lin(x)
-        x = super().forward(edge_index, x=x)
-        return x
+    def forward(self, edge_index, size=None, **kwargs):
+        if "x" in kwargs:
+            x = kwargs["x"]
+        else:
+            raise ValueError("x must be in kwargs")
 
+        x = self.linear(x)
 
-class CBMParallelMKLCSRSparseMatrixGCN(CBMParallelMKLCSRSparseMatrixMessagePassing):
-    def __init__(self, in_channels, out_channels):
-        super(CBMParallelMKLCSRSparseMatrixGCN, self).__init__(normalize=True)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
-        self.reset_parameters()
+        if self.cached:
+            if self.cached_a is None:
+                self.cached_a = cbm4gcn(edge_index.to(int32), ones(edge_index.size(1), dtype=x.dtype), alpha=self.alpha)
+            if self.cached_empty_tensor is None:
+                self.cached_empty_tensor = empty(size=(edge_index.max().item() + 1, x.size(1),), dtype=x.dtype, device=x.device)
+            a_t = self.cached_a
+            out = self.cached_empty_tensor
+        #else:
+        #    a_t = cbm4gcn(edge_index.to(int32), ones(edge_index.size(1), dtype=x.dtype), alpha=self.alpha)
+        #    out = empty(size=(edge_index.max().item() + 1, x.size(1),), dtype=x.dtype, device=x.device)
 
-    def reset_parameters(self):
-        self.lin.reset_parameters()
-
-    def forward(self, x, edge_index):
-        x = self.lin(x)
-        x = super().forward(edge_index, x=x)
-        return x
-
-
-class CBMSequentialTorchCSRSparseMatrixGCN(CBMSequentialTorchCSRSparseMatrixMessagePassing):
-    def __init__(self, in_channels, out_channels):
-        super(CBMSequentialTorchCSRSparseMatrixGCN, self).__init__(normalize=True)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        self.lin.reset_parameters()
-
-    def forward(self, x, edge_index):
-        x = self.lin(x)
-        x = super().forward(edge_index, x=x)
-        return x
-
-
-class CBMParallelTorchCSRSparseMatrixGCN(CBMParallelTorchCSRSparseMatrixMessagePassing):
-    def __init__(self, in_channels, out_channels):
-        super(CBMParallelTorchCSRSparseMatrixGCN, self).__init__(normalize=True)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.lin = Linear(in_channels, out_channels, bias=False, weight_initializer='glorot')
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        self.lin.reset_parameters()
-
-    def forward(self, x, edge_index):
-        x = self.lin(x)
-        x = super().forward(edge_index, x=x)
-        return x
+        a_t.matmul(x, out)
+        return out

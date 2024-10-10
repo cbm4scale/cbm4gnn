@@ -1,46 +1,100 @@
-#include <torch/extension.h>
 #include <omp.h>
+#include <immintrin.h>
+#include <torch/extension.h>
 #include <arbok/tarjan/tarjan_pq.h>
 
-#include "helpers.hpp"
-#include <immintrin.h>
+#include <queue>
+#include <vector>
+#include <numeric>
+#include <algorithm>
 
-std::vector<torch::Tensor> cbm_init_v1_(const torch::Tensor& src_row,
-                                        const torch::Tensor& src_col,
-                                        const torch::Tensor& src_val,
-                                        const MKL_INT src_n_rows,
-                                        const MKL_INT src_n_cols,
-                                        const MKL_INT alpha) {
+#include "mkl_spblas.h"
+
+#define CHECK_DTYPE(x, dtype) \
+    TORCH_CHECK(x.scalar_type() == dtype,  \
+    "\"" #x "\" is not a tensor of type \"" #dtype "\"")
+
+static inline void check_alloc(void* ptr) {
+    if (ptr == NULL) {
+            std::cerr << "Memory allocation failed." << std::endl;
+            exit(-1);
+            // Handle allocation failure
+        } else {
+            // Allocation was successful, use mkl_array as needed
+            std::cout << "Memory allocation successful." << std::endl;
+    }
+}
+
+static inline void check_status(sparse_status_t s) {
+    if (s == SPARSE_STATUS_SUCCESS) {
+        return;
+    }
+    else if (s == SPARSE_STATUS_NOT_INITIALIZED) {
+        printf("MKL: Not Initialized\n");
+        exit(-1);
+    }
+    else if (s == SPARSE_STATUS_ALLOC_FAILED) {
+        printf("MKL: Not Alloc'ed\n");
+        exit(-1);
+    }
+    else if (s == SPARSE_STATUS_INVALID_VALUE) {
+        printf("MKL: Invalid Value\n");
+        exit(-1);
+    }
+    else if (s == SPARSE_STATUS_EXECUTION_FAILED) {
+        printf("MKL: Execution Failed\n");
+        exit(-1);
+    }
+    else if (s == SPARSE_STATUS_INTERNAL_ERROR) {
+        printf("MKL: Internal Error\n");
+        exit(-1);
+    }
+    else if (s == SPARSE_STATUS_NOT_SUPPORTED) {
+        printf("MKL: Not Supported\n");
+        exit(-1);
+    }
+}
+
+
+std::vector<torch::Tensor> cbm_init_(const torch::Tensor& src_row_idx,
+                                     const torch::Tensor& src_col_idx,
+                                     const torch::Tensor& src_values,
+                                     const MKL_INT src_n_rows,
+                                     const MKL_INT alpha) {
     
+    CHECK_DTYPE(src_row_idx, torch::kInt32);
+    CHECK_DTYPE(src_col_idx, torch::kInt32);
+    CHECK_DTYPE(src_values, torch::kFloat32);
+
     sparse_matrix_t m_coo;
     check_status(mkl_sparse_s_create_coo(&m_coo,
                                          SPARSE_INDEX_BASE_ZERO,
                                          src_n_rows,
-                                         src_n_cols,
-                                         src_row.size(0),
-                                         src_row.data_ptr<MKL_INT>(),
-                                         src_col.data_ptr<MKL_INT>(),
-                                         src_val.data_ptr<float>()));
+                                         src_n_rows,
+                                         src_row_idx.size(0),
+                                         src_row_idx.data_ptr<MKL_INT>(),
+                                         src_col_idx.data_ptr<MKL_INT>(),
+                                         src_values.data_ptr<float>()));
     
     sparse_matrix_t m_csr;
     check_status(mkl_sparse_convert_csr(m_coo, SPARSE_OPERATION_NON_TRANSPOSE, &m_csr));
-    
+
     sparse_index_base_t csr_idx_t;
     MKL_INT csr_n_rows;
     MKL_INT csr_n_cols;
-    MKL_INT *csr_col; 
-    MKL_INT *csr_row_b; 
-    MKL_INT *csr_row_e;
-    float *csr_val;
+    MKL_INT *csr_col_idx; 
+    MKL_INT *csr_row_ptr_b; 
+    MKL_INT *csr_row_ptr_e;
+    float *csr_values;
     
     check_status(mkl_sparse_s_export_csr(m_csr, 
                                          &csr_idx_t, 
                                          &csr_n_rows, 
                                          &csr_n_cols, 
-                                         &csr_row_b, 
-                                         &csr_row_e, 
-                                         &csr_col, 
-                                         &csr_val));
+                                         &csr_row_ptr_b, 
+                                         &csr_row_ptr_e, 
+                                         &csr_col_idx, 
+                                         &csr_values));
 
     // compute syrk of dataset
     sparse_matrix_t m_syrk;
@@ -50,22 +104,19 @@ std::vector<torch::Tensor> cbm_init_v1_(const torch::Tensor& src_row,
     sparse_index_base_t syrk_idx_t;
     MKL_INT syrk_n_rows;
     MKL_INT syrk_n_cols;
-    MKL_INT *syrk_col; 
-    MKL_INT *syrk_row_b; 
-    MKL_INT *syrk_row_e;
-    float *syrk_val;
+    MKL_INT *syrk_col_idx; 
+    MKL_INT *syrk_row_ptr_b; 
+    MKL_INT *syrk_row_ptr_e;
+    float *syrk_values;
 
     check_status(mkl_sparse_s_export_csr(m_syrk, 
                                          &syrk_idx_t, 
                                          &syrk_n_rows, 
                                          &syrk_n_cols, 
-                                         &syrk_row_b, 
-                                         &syrk_row_e, 
-                                         &syrk_col, 
-                                         &syrk_val));
-
-    //create a vector of nnz for debugging purposes
-    std::vector<MKL_INT> nnz_vector;
+                                         &syrk_row_ptr_b, 
+                                         &syrk_row_ptr_e, 
+                                         &syrk_col_idx, 
+                                         &syrk_values));
     
     // declare distance graph G
     std::vector<std::array<MKL_INT, 3>> G;
@@ -73,197 +124,169 @@ std::vector<torch::Tensor> cbm_init_v1_(const torch::Tensor& src_row,
     MKL_INT candidates = 0;
     // populate distance graph G
     for (MKL_INT row = 0; row < syrk_n_rows; row++) {
-        MKL_INT s = syrk_row_b[row]; 
-        MKL_INT e = syrk_row_e[row];
-        MKL_INT nnz_r1 = csr_row_e[row] - csr_row_b[row];
-
-        // again debugging purposes...
-        nnz_vector.push_back(nnz_r1);    
+        MKL_INT s = syrk_row_ptr_b[row]; 
+        MKL_INT e = syrk_row_ptr_e[row];
+        MKL_INT nnz_r1 = csr_row_ptr_e[row] - csr_row_ptr_b[row];
 
         G.push_back({src_n_rows, row, nnz_r1});
         candidates++;
 
-
         for (MKL_INT i = s+1; i < e; i++) {
-            MKL_INT col = syrk_col[i];
-            MKL_INT val = syrk_val[i];
-            MKL_INT nnz_r2 = csr_row_e[col] - csr_row_b[col];
+            MKL_INT col = syrk_col_idx[i];
+            MKL_INT val = syrk_values[i];
+            MKL_INT nnz_r2 = csr_row_ptr_e[col] - csr_row_ptr_b[col];
             MKL_INT h = nnz_r1 + nnz_r2 - (2 * val);
 
-            if (h < (nnz_r1 - alpha)) {
+            if ((h < (nnz_r1 - alpha)) && (h != nnz_r1)) {
                 G.push_back({col, row, h});
                 candidates++;
             }
 
-            if( h < (nnz_r2 - alpha)) {
+            if ((h < (nnz_r2 - alpha)) && (h != nnz_r2)) {
                 G.push_back({row, col, h});
                 candidates++;
             }
         }
     }
 
-    // declare distance graph G
-    //std::vector<Edge> G;
-
     // initialize arbok datastructures for MSA
-    arbok::TarjanPQ msa(src_n_rows+1, candidates);
+    arbok::TarjanPQ mca(src_n_rows+1, candidates);
 
     // first run to identify number of candidate edges
     // this step is required due to arbok library
     for (int row = 0; row < syrk_n_rows; row++) {
-        int s = syrk_row_b[row]; 
-        int e = syrk_row_e[row];
-        int nnz_r1 = csr_row_e[row] - csr_row_b[row];
-
-        // again debugging purposes...
-        nnz_vector.push_back(nnz_r1);    
+        int b = syrk_row_ptr_b[row]; 
+        int e = syrk_row_ptr_e[row];
+        int nnz_r1 = csr_row_ptr_e[row] - csr_row_ptr_b[row];
 
         // add virtual edges
-        //G.push_back(Edge(src_n_rows, row, nnz_r1));
-        msa.create_edge(src_n_rows, row, nnz_r1);
+        mca.create_edge(src_n_rows, row, nnz_r1);
 
-
-        for (int i = s+1; i < e; i++) {
-            int col = syrk_col[i];
-            int val = syrk_val[i];
-            int nnz_r2 = csr_row_e[col] - csr_row_b[col];
+        for (int i = b+1; i < e; i++) {
+            int col = syrk_col_idx[i];
+            int val = syrk_values[i];
+            int nnz_r2 = csr_row_ptr_e[col] - csr_row_ptr_b[col];
             int h = nnz_r1 + nnz_r2 - (2 * val);
 
-            if (h < (nnz_r1 - alpha)) {
-                // edge from v to u is a suitable candidate
-                msa.create_edge(col, row, h);
+            // edge from v to u is a suitable candidate
+            if ((h < (nnz_r1 - alpha)) && (h != nnz_r1)) {
+                mca.create_edge(col, row, h);
             }
 
-            if( h < (nnz_r2 - alpha)) {
-                // edge from u to v is a suitable candidate
-                msa.create_edge(row, col, h);
+            // edge from u to v is a suitable candidate
+            if ((h < (nnz_r2 - alpha)) && (h != nnz_r2)) {
+                mca.create_edge(row, col, h);
             }
         }
     }
+
     mkl_sparse_destroy(m_coo);
     mkl_sparse_destroy(m_syrk);
 
     MKL_INT root = src_n_rows;
-    msa.run(root);
-    auto msa_list = msa.reconstruct(root);
+    mca.run(root);
+    auto mca_list = mca.reconstruct(root);
 
-    std::vector<std::vector<MKL_INT>> msa_adjacency(src_n_rows + 1);
+    std::vector<std::vector<MKL_INT>> mca_adjacency(src_n_rows + 1);
 
-    for(int e_idx : msa_list) {
-        auto [u, v, w] = G[e_idx];
-        msa_adjacency[u].push_back(v);
+    for(int edge_idx : mca_list) {
+        auto [u, v, w] = G[edge_idx];
+        mca_adjacency[u].push_back(v);
     }
 
-    long int delta_len = 0;
-    std::vector<float> delta_val;
-    std::vector<MKL_INT> delta_col;
-    std::vector<MKL_INT> delta_row;
+    std::vector<float> delta_values;
+    std::vector<MKL_INT> delta_row_ptr;
+    std::vector<MKL_INT> delta_col_ptr;
 
     // probably redundant but can be improved later
     std::vector<std::vector<MKL_INT>> rooted_tree(src_n_rows + 1);
+
+    // compute mca branches with more than 1 node
+    std::vector<MKL_INT> non_empty_branches;
+
+    for (MKL_INT v : mca_adjacency[src_n_rows])
+        if (mca_adjacency[v].size() > 0) 
+            non_empty_branches.push_back(v);
     
-    // declare bfs queue
+    
+    // mca data to be returned
+    std::vector<MKL_INT> mca_row_idx;                                       // mca row indices
+    std::vector<MKL_INT> mca_col_idx;                                       // mca column indices
+    std::vector<MKL_INT> mca_children = mca_adjacency[src_n_rows];          // mca root's children list for row scaling
+    std::vector<MKL_INT> mca_branches(non_empty_branches.size() + 1, 0);    // mca number of non empty branches
+
+    // intersect virtual node with its childs
+    for (auto v : mca_adjacency[src_n_rows]) {
+        MKL_INT v_ptr_cur = csr_row_ptr_b[v];
+        MKL_INT v_ptr_max = csr_row_ptr_e[v];
+ 
+        while(v_ptr_cur < v_ptr_max) {
+            delta_col_ptr.push_back(csr_col_idx[v_ptr_cur]);
+            delta_row_ptr.push_back(v);
+            delta_values.push_back(1);
+            v_ptr_cur++;
+        }        
+    }
+
+    // traverse mca branches
     std::queue<MKL_INT> fifo;
-    fifo.push(root);
-    
-    // declare and initialize list of open nodes
-    std::vector<bool> opened_node(src_n_rows + 1, false);
-    opened_node[src_n_rows] = true;
+    for (MKL_INT b = 0; b < non_empty_branches.size(); b++){
+        fifo.push(non_empty_branches[b]);
 
-    while (!fifo.empty()) 
-    {
-        MKL_INT u = fifo.front();
-        fifo.pop();
-        
-        for (MKL_INT v : msa_adjacency[u]) 
-        {
-            if (!opened_node[v]) 
-            {
+        while (!fifo.empty()) {
+            MKL_INT u = fifo.front(); fifo.pop();
+
+            for (MKL_INT v : mca_adjacency[u]) {
                 fifo.push(v);
-                opened_node[v] = true;
-                rooted_tree[u].push_back(v);
 
-                MKL_INT u_ptr_cur = csr_row_b[u];
-                MKL_INT u_ptr_max = csr_row_e[u];
-                MKL_INT v_ptr_cur = csr_row_b[v];
-                MKL_INT v_ptr_max = csr_row_e[v];
+                // push edge (u,v)
+                mca_row_idx.push_back(u);
+                mca_col_idx.push_back(v);
+                mca_branches[b + 1]++;
 
-                // parent node is virtual node 
-                if (u == csr_n_rows) {
-                    while(v_ptr_cur < v_ptr_max) {        
-                        //store deltas in coo format
-                        delta_col.push_back(csr_col[v_ptr_cur]);
-                        delta_row.push_back(v);
-                        delta_val.push_back(1);
-                        delta_len++;
+                MKL_INT u_ptr_cur = csr_row_ptr_b[u];
+                MKL_INT u_ptr_max = csr_row_ptr_e[u];
+                MKL_INT v_ptr_cur = csr_row_ptr_b[v];
+                MKL_INT v_ptr_max = csr_row_ptr_e[v];
+
+                // compute row-wise intersection
+                while (u_ptr_cur < u_ptr_max && v_ptr_cur < v_ptr_max) {
+                    //column indices matched
+                    if (csr_col_idx[u_ptr_cur] == csr_col_idx[v_ptr_cur]) {
+                        u_ptr_cur++; v_ptr_cur++;
+                    }
+                    
+                    // column index of u is larger than v's 
+                    else if (csr_col_idx[u_ptr_cur] > csr_col_idx[v_ptr_cur]) {
+                        delta_col_ptr.push_back(csr_col_idx[v_ptr_cur]);
+                        delta_row_ptr.push_back(v);
+                        delta_values.push_back(1);
                         v_ptr_cur++;
-                    }        
+                    }
+
+                    // column index of v is larger than u's 
+                    else{
+                        delta_col_ptr.push_back(csr_col_idx[u_ptr_cur]);
+                        delta_row_ptr.push_back(v);
+                        delta_values.push_back(-1);
+                        u_ptr_cur++;
+                    }
                 }
 
-                //parent node is NOT virtual node 
-                else {
-                    // again debugging...
-                    MKL_INT deltas_count = 0;
+                // row v doesn't have more column indices
+                while(u_ptr_cur < u_ptr_max) {
+                    delta_col_ptr.push_back(csr_col_idx[u_ptr_cur]);
+                    delta_row_ptr.push_back(v);
+                    delta_values.push_back(-1);
+                    u_ptr_cur++;
+                }
 
-                    while (u_ptr_cur < u_ptr_max && v_ptr_cur < v_ptr_max) {
-                            
-                        //column index matched
-                        if (csr_col[u_ptr_cur] == csr_col[v_ptr_cur]) {
-                            u_ptr_cur++; v_ptr_cur++;
-                        }
-
-                        // case 1 - column index do not match:
-                        // column index of u is larger than v's 
-                        else if (csr_col[u_ptr_cur] > csr_col[v_ptr_cur]) {
-                            //store deltas in coo format
-                            delta_col.push_back(csr_col[v_ptr_cur]);
-                            delta_row.push_back(v);
-                            delta_val.push_back(1);
-                            delta_len++;
-                            v_ptr_cur++;
-
-                            deltas_count++;
-                        }
-
-                        // case 2 - column index do not match:
-                        // column index of v is larger than u's 
-                        else{
-                            //store deltas in coo format
-                            delta_col.push_back(csr_col[u_ptr_cur]);
-                            delta_row.push_back(v);
-                            delta_val.push_back(-1);
-                            delta_len++;
-                            u_ptr_cur++;
-
-                            deltas_count++;
-                        }
-                    }
-
-                    while(u_ptr_cur < u_ptr_max) {
-                        delta_col.push_back(csr_col[u_ptr_cur]);
-                        delta_row.push_back(v);
-                        delta_val.push_back(-1);
-                        delta_len++;
-                        u_ptr_cur++;
-
-                        deltas_count++;
-                    }
-
-                    while(v_ptr_cur < v_ptr_max){
-                        //store deltas in coo format
-                        delta_col.push_back(csr_col[v_ptr_cur]);
-                        delta_row.push_back(v);
-                        delta_val.push_back(1);
-                        delta_len++;
-                        v_ptr_cur++;
-
-                        deltas_count++;
-                    }
-                
-                    // check if alpha is correctly implemented
-                    //if (deltas_count >= (nnz_vector[v] - alpha))
-                    //    printf("deltas_count: %ld, nnz: %ld, alpha: %ld, (%ld -> %ld)\n", deltas_count, nnz_vector[v], alpha, u, v);
-                
+                // row u doesn't have more column indices
+                while(v_ptr_cur < v_ptr_max){
+                    delta_col_ptr.push_back(csr_col_idx[v_ptr_cur]);
+                    delta_row_ptr.push_back(v);
+                    delta_values.push_back(1);
+                    v_ptr_cur++;
                 }
             }
         }
@@ -271,372 +294,49 @@ std::vector<torch::Tensor> cbm_init_v1_(const torch::Tensor& src_row,
 
     mkl_sparse_destroy(m_csr);
 
-    std::vector<MKL_INT> edges_row;
-    std::vector<MKL_INT> edges_col;
-
-    edges_row.push_back(0);
-
-    for (MKL_INT u = 0; u < src_n_rows + 1; u++) {
-
-        // compute columns per row
-        edges_row.push_back(edges_row[u] + rooted_tree[u].size());
-        
-        // assign column indices
-        edges_col.insert(edges_col.end(), rooted_tree[u].begin(), rooted_tree[u].end());
-    }
+    // compute prefix sum of mca_branches
+    std::partial_sum(mca_branches.begin(), mca_branches.end(), mca_branches.begin());
 
     std::vector<torch::Tensor> result;
-
-    result.push_back(torch::from_blob((void*)edges_row.data(), 
-                                      {edges_row.size()}, 
+    result.push_back(torch::from_blob((void*)delta_row_ptr.data(), 
+                                      {delta_row_ptr.size()}, 
                                       torch::TensorOptions()
                                           .dtype(torch::kInt32)
                                           .device(torch::kCPU))
                                       .clone());
 
-    result.push_back(torch::from_blob((void*)edges_col.data(), 
-                                      {edges_col.size()}, 
+    result.push_back(torch::from_blob((void*)delta_col_ptr.data(), 
+                                      {delta_col_ptr.size()}, 
                                       torch::TensorOptions()
                                           .dtype(torch::kInt32)
                                           .device(torch::kCPU))
                                       .clone());
 
-    result.push_back(torch::from_blob((void*)delta_row.data(), 
-                                      {delta_row.size()}, 
-                                      torch::TensorOptions()
-                                          .dtype(torch::kInt32)
-                                          .device(torch::kCPU))
-                                      .clone());
-
-    result.push_back(torch::from_blob((void*)delta_col.data(), 
-                                      {delta_col.size()}, 
-                                      torch::TensorOptions()
-                                          .dtype(torch::kInt32)
-                                          .device(torch::kCPU))
-                                      .clone());
-
-    result.push_back(torch::from_blob((void*)delta_val.data(), 
-                                      {delta_val.size()}, 
+    result.push_back(torch::from_blob((void*)delta_values.data(), 
+                                      {delta_values.size()}, 
                                       torch::TensorOptions()
                                           .dtype(torch::kFloat32)
                                           .device(torch::kCPU))
                                       .clone());
 
-    return result;
-}
-
-std::vector<torch::Tensor> cbm_init_v2_(const torch::Tensor& src_row,
-                                        const torch::Tensor& src_col,
-                                        const torch::Tensor& src_val,
-                                        const torch::Tensor& col_mul,
-                                        const MKL_INT src_n_rows,
-                                        const MKL_INT src_n_cols,
-                                        const MKL_INT alpha) {
-    
-    sparse_matrix_t m_coo;
-    check_status(mkl_sparse_s_create_coo(&m_coo,
-                                         SPARSE_INDEX_BASE_ZERO,
-                                         src_n_rows,
-                                         src_n_cols,
-                                         src_row.size(0),
-                                         src_row.data_ptr<MKL_INT>(),
-                                         src_col.data_ptr<MKL_INT>(),
-                                         src_val.data_ptr<float>()));
-    
-    sparse_matrix_t m_csr;
-    check_status(mkl_sparse_convert_csr(m_coo, SPARSE_OPERATION_NON_TRANSPOSE, &m_csr));
-    
-    sparse_index_base_t csr_idx_t;
-    MKL_INT csr_n_rows;
-    MKL_INT csr_n_cols;
-    MKL_INT *csr_col; 
-    MKL_INT *csr_row_b; 
-    MKL_INT *csr_row_e;
-    float *csr_val;
-    
-    check_status(mkl_sparse_s_export_csr(m_csr, 
-                                         &csr_idx_t, 
-                                         &csr_n_rows, 
-                                         &csr_n_cols, 
-                                         &csr_row_b, 
-                                         &csr_row_e, 
-                                         &csr_col, 
-                                         &csr_val));
-
-    // compute syrk of dataset
-    sparse_matrix_t m_syrk;
-    check_status(mkl_sparse_syrk(SPARSE_OPERATION_NON_TRANSPOSE, m_csr, &m_syrk));
-    
-    // extract syrk in in csr format
-    sparse_index_base_t syrk_idx_t;
-    MKL_INT syrk_n_rows;
-    MKL_INT syrk_n_cols;
-    MKL_INT *syrk_col; 
-    MKL_INT *syrk_row_b; 
-    MKL_INT *syrk_row_e;
-    float *syrk_val;
-
-    check_status(mkl_sparse_s_export_csr(m_syrk, 
-                                         &syrk_idx_t, 
-                                         &syrk_n_rows, 
-                                         &syrk_n_cols, 
-                                         &syrk_row_b, 
-                                         &syrk_row_e, 
-                                         &syrk_col, 
-                                         &syrk_val));
-
-    //create a vector of nnz for debugging purposes
-    std::vector<MKL_INT>  nnz_vector;
-    
-    // declare distance graph G
-    std::vector<std::array<MKL_INT, 3>> G;
-
-    MKL_INT candidates = 0;
-    // populate distance graph G
-    for (MKL_INT row = 0; row < syrk_n_rows; row++) {
-        MKL_INT s = syrk_row_b[row]; 
-        MKL_INT e = syrk_row_e[row];
-        MKL_INT nnz_r1 = csr_row_e[row] - csr_row_b[row];
-
-        // again debugging purposes...
-        nnz_vector.push_back(nnz_r1);    
-
-        G.push_back({src_n_rows, row, nnz_r1});
-        candidates++;
-
-
-        for (MKL_INT i = s+1; i < e; i++) {
-            MKL_INT col = syrk_col[i];
-            MKL_INT val = syrk_val[i];
-            MKL_INT nnz_r2 = csr_row_e[col] - csr_row_b[col];
-            MKL_INT h = nnz_r1 + nnz_r2 - (2 * val);
-
-            if (h < (nnz_r1 - alpha)) {
-                G.push_back({col, row, h});
-                candidates++;
-            }
-
-            if( h < (nnz_r2 - alpha)) {
-                G.push_back({row, col, h});
-                candidates++;
-            }
-        }
-    }
-
-    // initialize arbok datastructures for MSA
-    arbok::TarjanPQ msa(src_n_rows+1, candidates);
-
-    // first run to identify number of candidate edges
-    // this step is required due to arbok library
-    for (int row = 0; row < syrk_n_rows; row++) {
-        int s = syrk_row_b[row]; 
-        int e = syrk_row_e[row];
-        int nnz_r1 = csr_row_e[row] - csr_row_b[row];
-
-        // again debugging purposes...
-        nnz_vector.push_back(nnz_r1);    
-
-        // add virtual edges
-        //G.push_back(Edge(src_n_rows, row, nnz_r1));
-        msa.create_edge(src_n_rows, row, nnz_r1);
-
-
-        for (int i = s+1; i < e; i++) {
-            int col = syrk_col[i];
-            int val = syrk_val[i];
-            int nnz_r2 = csr_row_e[col] - csr_row_b[col];
-            int h = nnz_r1 + nnz_r2 - (2 * val);
-
-            if (h < (nnz_r1 - alpha)) {
-                // edge from v to u is a suitable candidate
-                msa.create_edge(col, row, h);
-            }
-
-            if( h < (nnz_r2 - alpha)) {
-                // edge from u to v is a suitable candidate
-                msa.create_edge(row, col, h);
-            }
-        }
-    }
-    mkl_sparse_destroy(m_coo);
-    mkl_sparse_destroy(m_syrk);
-
-    MKL_INT root = src_n_rows;
-    msa.run(root);
-    auto msa_list = msa.reconstruct(root);
-
-    std::vector<std::vector<MKL_INT>> msa_adjacency(src_n_rows + 1);
-
-    for(int e_idx : msa_list) {
-        auto [u, v, w] = G[e_idx];
-        msa_adjacency[u].push_back(v);
-    }
-
-    long int delta_len = 0;
-    std::vector<float> delta_val;
-    std::vector<MKL_INT> delta_col;
-    std::vector<MKL_INT> delta_row;
-    float *col_mul_ptr = col_mul.data_ptr<float>();
-    
-    // declare bfs queue
-    std::queue<MKL_INT> fifo;
-    
-    // push root vertex to stack
-    fifo.push(csr_n_rows);
-    
-    std::vector<std::vector<MKL_INT>> rooted_tree(src_n_rows + 1);
-    std::vector<bool> opened_node(src_n_rows + 1, false);
-    opened_node[src_n_rows] = true;
-
-    while (!fifo.empty()) 
-    {
-        MKL_INT u = fifo.front();
-        fifo.pop();
-        
-        for (MKL_INT v : msa_adjacency[u]) 
-        {
-            if (!opened_node[v]) 
-            {
-                fifo.push(v);
-                opened_node[v] = true;
-                rooted_tree[u].push_back(v);
-
-                MKL_INT u_ptr_cur = csr_row_b[u];
-                MKL_INT u_ptr_max = csr_row_e[u];
-                MKL_INT v_ptr_cur = csr_row_b[v];
-                MKL_INT v_ptr_max = csr_row_e[v];
-
-                // parent node is virtual node 
-                if (u == csr_n_rows) {
-                    while(v_ptr_cur < v_ptr_max) {        
-                        //store deltas in coo format
-                        MKL_INT col_idx = csr_col[v_ptr_cur];
-
-                        delta_row.push_back(v);
-                        delta_col.push_back(col_idx);
-                        delta_val.push_back(col_mul_ptr[col_idx]);
-                        delta_len++;
-                        v_ptr_cur++;
-                    }        
-                }
-
-                //parent node is NOT virtual node 
-                else {
-                    // again debugging...
-                    MKL_INT deltas_count = 0;
-
-                    while (u_ptr_cur < u_ptr_max && v_ptr_cur < v_ptr_max) {
-                            
-                        //column index matched
-                        if (csr_col[u_ptr_cur] == csr_col[v_ptr_cur]) {
-                            u_ptr_cur++; v_ptr_cur++;
-                        }
-
-                        // case 1 - column index do not match:
-                        // column index of u is larger than v's 
-                        else if (csr_col[u_ptr_cur] > csr_col[v_ptr_cur]) {
-                            //store deltas in coo format
-                            MKL_INT col_idx = csr_col[v_ptr_cur];
-
-                            delta_row.push_back(v);
-                            delta_col.push_back(col_idx);
-                            delta_val.push_back(col_mul_ptr[col_idx]);
-                        
-                            delta_len++;
-                            v_ptr_cur++;
-
-                            deltas_count++;
-                        }
-
-                        // case 2 - column index do not match:
-                        // column index of v is larger than u's 
-                        else{
-                            //store deltas in coo format
-                            MKL_INT col_idx = csr_col[u_ptr_cur];
-
-                            delta_row.push_back(v);
-                            delta_col.push_back(col_idx);
-                            delta_val.push_back(-col_mul_ptr[col_idx]);
-                        
-                            delta_len++;
-                            u_ptr_cur++;
-                        }
-                    }
-
-                    while(v_ptr_cur < v_ptr_max){
-                        MKL_INT col_idx = csr_col[v_ptr_cur];
-
-                        delta_row.push_back(v);
-                        delta_col.push_back(col_idx);
-                        delta_val.push_back(col_mul_ptr[col_idx]);
-                        delta_len++;
-                        v_ptr_cur++;
-                    }
-
-                    while(u_ptr_cur < u_ptr_max) {
-                        MKL_INT col_idx = csr_col[u_ptr_cur];
-
-                        delta_row.push_back(v);
-                        delta_col.push_back(col_idx);
-                        delta_val.push_back(-col_mul_ptr[col_idx]);
-                        delta_len++;
-                        u_ptr_cur++;
-                    }
-                }
-            }
-        }
-    }
-
-    mkl_sparse_destroy(m_csr);
-
-    std::vector<MKL_INT> edges_row;
-    std::vector<MKL_INT> edges_col;
-
-    edges_row.push_back(0);
-
-    for (MKL_INT u = 0; u < src_n_rows + 1; u++) {
-
-        // compute columns per row
-        edges_row.push_back(edges_row[u] + rooted_tree[u].size());
-        
-        // assign column indices
-        edges_col.insert(edges_col.end(), rooted_tree[u].begin(), rooted_tree[u].end());
-    }
-
-    std::vector<torch::Tensor> result;
-
-    result.push_back(torch::from_blob((void*)edges_row.data(), 
-                                      {edges_row.size()}, 
+    result.push_back(torch::from_blob((void*)mca_branches.data(), 
+                                      {mca_branches.size()}, 
                                       torch::TensorOptions()
                                           .dtype(torch::kInt32)
                                           .device(torch::kCPU))
                                       .clone());
 
-    result.push_back(torch::from_blob((void*)edges_col.data(), 
-                                      {edges_col.size()}, 
+    result.push_back(torch::from_blob((void*)mca_row_idx.data(), 
+                                      {mca_row_idx.size()}, 
                                       torch::TensorOptions()
                                           .dtype(torch::kInt32)
                                           .device(torch::kCPU))
                                       .clone());
 
-    result.push_back(torch::from_blob((void*)delta_row.data(), 
-                                      {delta_row.size()}, 
+    result.push_back(torch::from_blob((void*)mca_col_idx.data(), 
+                                      {mca_col_idx.size()}, 
                                       torch::TensorOptions()
                                           .dtype(torch::kInt32)
-                                          .device(torch::kCPU))
-                                      .clone());
-
-    result.push_back(torch::from_blob((void*)delta_col.data(), 
-                                      {delta_col.size()}, 
-                                      torch::TensorOptions()
-                                          .dtype(torch::kInt32)
-                                          .device(torch::kCPU))
-                                      .clone());
-
-    result.push_back(torch::from_blob((void*)delta_val.data(), 
-                                      {delta_val.size()}, 
-                                      torch::TensorOptions()
-                                          .dtype(torch::kFloat32)
                                           .device(torch::kCPU))
                                       .clone());
 
@@ -647,46 +347,37 @@ std::vector<torch::Tensor> cbm_init_v2_(const torch::Tensor& src_row,
 // sequence_of_operations[update, spmm] + sparse_format[coo, csr] +
 // mkl_interface[int32, int64] 
 
-static inline void seq_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b, 
-                                                const at::Tensor& lhs_row_e, 
-                                                const at::Tensor& lhs_col, 
-                                                const at::Tensor& lhs_val,
-                                                const at::Tensor& rhs, 
-                                                const at::Tensor& edges_src,
-                                                const at::Tensor& edges_dst,
+static inline void omp_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_ptr_b, 
+                                                const at::Tensor& lhs_row_ptr_e, 
+                                                const at::Tensor& lhs_col_idx, 
+                                                const at::Tensor& lhs_values,
+                                                const at::Tensor& rhs,
+                                                const at::Tensor& mca_branches, 
+                                                const at::Tensor& mca_row_idx,
+                                                const at::Tensor& mca_col_idx,
                                                 at::Tensor& dst) {
-
-    TORCH_CHECK(lhs_row_b.scalar_type() == torch::kInt32, "lhs_row_b (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_row_e.scalar_type() == torch::kInt32, "lhs_row_e (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_col.scalar_type() == torch::kInt32, "lhs_col (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_val.scalar_type() == torch::kFloat32, "lhs_val (NOT torch::kFloat32)");
-    TORCH_CHECK(rhs.scalar_type() == torch::kFloat32, "rhs tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-
-    int max_threads = mkl_get_max_threads();
-    mkl_set_num_threads(1);
-
-    MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
-    MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
-    MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
-    MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
-    float *lhs_val_ptr = lhs_val.data_ptr<float>();
+    CHECK_DTYPE(rhs, torch::kFloat32);
+    CHECK_DTYPE(dst, torch::kFloat32);
+    CHECK_DTYPE(mca_branches, torch::kInt32);
+    CHECK_DTYPE(mca_row_idx, torch::kInt32);
+    CHECK_DTYPE(mca_col_idx, torch::kInt32);
+    CHECK_DTYPE(lhs_row_ptr_b, torch::kInt32);
+    CHECK_DTYPE(lhs_row_ptr_e, torch::kInt32);
+    CHECK_DTYPE(lhs_col_idx, torch::kInt32);
+    CHECK_DTYPE(lhs_values, torch::kFloat32);
 
     sparse_matrix_t m_csr; 
-    check_status(mkl_sparse_s_create_csr(&m_csr, 
-                                         SPARSE_INDEX_BASE_ZERO,
-                                         lhs_n_rows, 
-                                         lhs_n_cols,
-                                         lhs_row_b_ptr, 
-                                         lhs_row_e_ptr,
-                                         lhs_col_ptr,
-                                         lhs_val_ptr));
+    check_status( mkl_sparse_s_create_csr(&m_csr, 
+                                          SPARSE_INDEX_BASE_ZERO,
+                                          dst.size(0), 
+                                          rhs.size(1),
+                                          lhs_row_ptr_b.data_ptr<MKL_INT>(), 
+                                          lhs_row_ptr_e.data_ptr<MKL_INT>(),
+                                          lhs_col_idx.data_ptr<MKL_INT>(),
+                                          lhs_values.data_ptr<float>()));
 
-    float *rhs_ptr = rhs.data_ptr<float>();
-    float *dst_ptr = dst.data_ptr<float>();
+    float *rhs_data = rhs.data_ptr<float>();
+    float *dst_data = dst.data_ptr<float>();
 
     struct matrix_descr descr;
     descr.type = SPARSE_MATRIX_TYPE_GENERAL;
@@ -696,193 +387,94 @@ static inline void seq_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
                                  m_csr,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
-                                 rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
+                                 rhs_data, 
+                                 rhs.size(1),
+                                 rhs.size(1), 
                                  0.0f, 
-                                 dst_ptr,
-                                 lhs_n_cols));
+                                 dst_data,
+                                 rhs.size(1)));
 
-    // spmm done; start update
+    mkl_sparse_destroy(m_csr);
 
-    MKL_INT dst_n_rows = dst.size(0);
+    MKL_INT branch_idx, edge_idx;
     MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
+    MKL_INT mca_num_branches = mca_branches.size(0) ;
+    MKL_INT *mca_branches_data = mca_branches.data_ptr<MKL_INT>();
+    MKL_INT *mca_row_idx_data = mca_row_idx.data_ptr<MKL_INT>();
+    MKL_INT *mca_col_idx_data = mca_col_idx.data_ptr<MKL_INT>();
 
-    std::stack<MKL_INT> lifo;
-    
-    for (MKL_INT i = edges_src_ptr[dst_n_rows]; i < edges_src_ptr[dst_n_rows + 1]; i++) {
-        lifo.push(edges_dst_ptr[i]);
-    }
+    #pragma omp parallel for schedule(dynamic, 50) private(branch_idx, edge_idx)
+    for (branch_idx = 0; branch_idx < mca_num_branches - 1; branch_idx++) {
+        // traverse each mca branch and update
+        for (edge_idx = mca_branches_data[branch_idx]; 
+             edge_idx < mca_branches_data[branch_idx + 1]; 
+             edge_idx++) {
+            
+            float *src_row = dst_data + (dst_n_cols * mca_row_idx_data[edge_idx]);
+            float *dst_row = dst_data + (dst_n_cols * mca_col_idx_data[edge_idx]);
+            
+            MKL_INT col_idx;
+            for (col_idx = 0; col_idx < dst_n_cols - 15; col_idx += 16) {
+                __m256 ymm0 = _mm256_loadu_ps(src_row + col_idx);
+                __m256 ymm1 = _mm256_loadu_ps(dst_row + col_idx);
+                ymm1 = _mm256_add_ps(ymm0, ymm1);
+                _mm256_storeu_ps(dst_row + col_idx, ymm1);
 
-    while (!lifo.empty()) {
-        // get index of src vertex
-        MKL_INT u = lifo.top();
-        MKL_INT u_ptr_cur = edges_src_ptr[u];
-        MKL_INT u_ptr_max = edges_src_ptr[u + 1];
+                __m256 ymm2 = _mm256_loadu_ps(src_row + col_idx + 8);
+                __m256 ymm3 = _mm256_loadu_ps(dst_row + col_idx + 8);
+                ymm3 = _mm256_add_ps(ymm2, ymm3);
+                _mm256_storeu_ps(dst_row + col_idx + 8, ymm3);
+            }
+                
+            if (col_idx < dst_n_cols - 7) {
+                __m256 ymm0 = _mm256_loadu_ps(src_row + col_idx);
+                __m256 ymm1 = _mm256_loadu_ps(dst_row + col_idx);
+                ymm1 = _mm256_add_ps(ymm0, ymm1);
 
-        lifo.pop();
+                _mm256_storeu_ps(dst_row + col_idx, ymm1);
+                col_idx += 8;
+            }
 
-        for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-            // get index of dst vertex
-            MKL_INT v = edges_dst_ptr[u_ptr_cur];
-
-            // update destination matrix            
-            float *x = dst_ptr + (u * dst_n_cols);
-            float *y = dst_ptr + (v * dst_n_cols);
-            cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
-
-            lifo.push(v);
+            for (; col_idx < dst_n_cols; col_idx++) {
+                dst_row[col_idx] += src_row[col_idx];
+            }
         }
     }
-    mkl_set_num_threads(max_threads);
 }
 
-static inline void seq_s_update_csr_int32_(const at::Tensor& edges_src,
-                                           const at::Tensor& edges_dst,
-                                           at::Tensor& dst) {
-
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-
-    int max_threads = mkl_get_max_threads();
-    mkl_set_num_threads(1);
-
-    MKL_INT dst_n_rows = dst.size(0);
-    MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
-    float *dst_ptr = dst.data_ptr<float>();
-
-    std::stack<MKL_INT> lifo;
-    
-    for (MKL_INT i = edges_src_ptr[dst_n_rows]; i < edges_src_ptr[dst_n_rows + 1]; i++) {
-        lifo.push(edges_dst_ptr[i]);
-    }
-
-    while (!lifo.empty()) {
-        // get index of src vertex
-        MKL_INT u = lifo.top();
-        MKL_INT u_ptr_cur = edges_src_ptr[u];
-        MKL_INT u_ptr_max = edges_src_ptr[u + 1];
-
-        lifo.pop();
-
-        for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-            // get index of dst vertex
-            MKL_INT v = edges_dst_ptr[u_ptr_cur];
-
-            // update destination matrix            
-            float *x = dst_ptr + (u * dst_n_cols);
-            float *y = dst_ptr + (v * dst_n_cols);
-            cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
-
-            lifo.push(v);
-        }
-    }
-    mkl_set_num_threads(max_threads);
-}
-
-
-// use this function for benchmarking against intel-mkl csr-s-spmm
-static inline void seq_s_spmm_csr_int32_(const at::Tensor& lhs_row_b, 
-                                         const at::Tensor& lhs_row_e, 
-                                         const at::Tensor& lhs_col, 
-                                         const at::Tensor& lhs_val,
-                                         const at::Tensor& rhs, 
-                                         at::Tensor& dst) {
-
-    TORCH_CHECK(lhs_row_b.scalar_type() == torch::kInt32, "lhs_row_b (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_row_e.scalar_type() == torch::kInt32, "lhs_row_e (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_col.scalar_type() == torch::kInt32, "lhs_col (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_val.scalar_type() == torch::kFloat32, "lhs_val (NOT torch::kFloat32)");
-    TORCH_CHECK(rhs.scalar_type() == torch::kFloat32, "rhs tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-    
-    int max_threads = mkl_get_max_threads();
-    mkl_set_num_threads(1);
-
-    MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
-    MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
-    MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
-    MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
-    float *lhs_val_ptr = lhs_val.data_ptr<float>();
-
-    sparse_matrix_t m_csr; 
-    check_status(mkl_sparse_s_create_csr(&m_csr, 
-                                         SPARSE_INDEX_BASE_ZERO,
-                                         lhs_n_rows, 
-                                         lhs_n_cols,
-                                         lhs_row_b_ptr, 
-                                         lhs_row_e_ptr,
-                                         lhs_col_ptr,
-                                         lhs_val_ptr));
-
-    float *rhs_ptr = rhs.data_ptr<float>();
-    float *dst_ptr = dst.data_ptr<float>();
-
-    struct matrix_descr descr;
-    descr.type = SPARSE_MATRIX_TYPE_GENERAL;
-
-    check_status(mkl_sparse_s_mm(SPARSE_OPERATION_NON_TRANSPOSE,
-                                 1.0f, 
-                                 m_csr,
-                                 descr,
-                                 SPARSE_LAYOUT_ROW_MAJOR, 
-                                 rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
-                                 0.0f, 
-                                 dst_ptr,
-                                 lhs_n_cols));
-
-    mkl_set_num_threads(max_threads);
-}
-
-static inline void seq_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_b, 
-                                                      const at::Tensor& lhs_row_e, 
-                                                      const at::Tensor& lhs_col, 
-                                                      const at::Tensor& lhs_val,
+static inline void omp_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_ptr_b, 
+                                                      const at::Tensor& lhs_row_ptr_e, 
+                                                      const at::Tensor& lhs_col_idx, 
+                                                      const at::Tensor& lhs_values,
                                                       const at::Tensor& rhs, 
-                                                      const at::Tensor& edges_src,
-                                                      const at::Tensor& edges_dst,
+                                                      const at::Tensor& mca_branches,
+                                                      const at::Tensor& mca_row_idx,
+                                                      const at::Tensor& mca_col_idx,
                                                       const at::Tensor& multiplier,
                                                       at::Tensor& dst) {
-
-    TORCH_CHECK(lhs_row_b.scalar_type() == torch::kInt32, "lhs_row_b (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_row_e.scalar_type() == torch::kInt32, "lhs_row_e (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_col.scalar_type() == torch::kInt32, "lhs_col (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_val.scalar_type() == torch::kFloat32, "lhs_val (NOT torch::kFloat32)");
-    TORCH_CHECK(rhs.scalar_type() == torch::kFloat32, "rhs tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-    TORCH_CHECK(multiplier.scalar_type() == torch::kFloat32, "edge_dst (NOT torch::kFloat32)");
-
-    mkl_set_num_threads(1);
-
-    MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
-    MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
-    MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
-    MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
-    float *lhs_val_ptr = lhs_val.data_ptr<float>();
+    CHECK_DTYPE(rhs, torch::kFloat32);
+    CHECK_DTYPE(dst, torch::kFloat32);
+    CHECK_DTYPE(mca_branches, torch::kInt32);
+    CHECK_DTYPE(mca_row_idx, torch::kInt32);
+    CHECK_DTYPE(mca_col_idx, torch::kInt32);
+    CHECK_DTYPE(lhs_row_ptr_b, torch::kInt32);
+    CHECK_DTYPE(lhs_row_ptr_e, torch::kInt32);
+    CHECK_DTYPE(lhs_col_idx, torch::kInt32);
+    CHECK_DTYPE(lhs_values, torch::kFloat32);
+    CHECK_DTYPE(multiplier, torch::kFloat32);
 
     sparse_matrix_t m_csr; 
     check_status( mkl_sparse_s_create_csr(&m_csr, 
                                           SPARSE_INDEX_BASE_ZERO,
-                                          lhs_n_rows, 
-                                          lhs_n_cols,
-                                          lhs_row_b_ptr, 
-                                          lhs_row_e_ptr,
-                                          lhs_col_ptr,
-                                          lhs_val_ptr));
+                                          dst.size(0), 
+                                          rhs.size(1),
+                                          lhs_row_ptr_b.data_ptr<MKL_INT>(), 
+                                          lhs_row_ptr_e.data_ptr<MKL_INT>(),
+                                          lhs_col_idx.data_ptr<MKL_INT>(),
+                                          lhs_values.data_ptr<float>()));
 
-    float *rhs_ptr = rhs.data_ptr<float>();
-    float *dst_ptr = dst.data_ptr<float>();
+    float *rhs_data = rhs.data_ptr<float>();
+    float *dst_data = dst.data_ptr<float>();
 
     struct matrix_descr descr;
     descr.type = SPARSE_MATRIX_TYPE_GENERAL;
@@ -892,256 +484,96 @@ static inline void seq_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_
                                  m_csr,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
-                                 rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
+                                 rhs_data, 
+                                 rhs.size(1),
+                                 rhs.size(1), 
                                  0.0f, 
-                                 dst_ptr,
-                                 lhs_n_cols));
+                                 dst_data,
+                                 rhs.size(1)));
 
-    MKL_INT dst_n_rows = dst.size(0);
+    mkl_sparse_destroy(m_csr);
+
+    MKL_INT branch_idx, edge_idx;
     MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
-    float* multiplier_ptr = multiplier.data_ptr<float>();
+    MKL_INT mca_num_branches = mca_branches.size(0) ;
+    MKL_INT *mca_branches_data = mca_branches.data_ptr<MKL_INT>();
+    MKL_INT *mca_row_idx_data = mca_row_idx.data_ptr<MKL_INT>();
+    MKL_INT *mca_col_idx_data = mca_col_idx.data_ptr<MKL_INT>();
+    float* mult_data = multiplier.data_ptr<float>();
 
-    std::stack<MKL_INT> lifo;
+    #pragma omp parallel for schedule(dynamic, 50) private(branch_idx, edge_idx)
+    for (branch_idx = 0; branch_idx < mca_num_branches - 1; branch_idx++) {
+        // traverse each mca branch and update
+        for (edge_idx = mca_branches_data[branch_idx]; 
+             edge_idx < mca_branches_data[branch_idx + 1]; 
+             edge_idx++) {
+            
+            MKL_INT mca_src_idx = mca_row_idx_data[edge_idx];
+            MKL_INT mca_dst_idx = mca_col_idx_data[edge_idx];
+            float *src_row = dst_data + (dst_n_cols * mca_src_idx);
+            float *dst_row = dst_data + (dst_n_cols * mca_dst_idx);
+            
+            const float mult = mult_data[mca_dst_idx] / mult_data[mca_src_idx];
+            const __m256 ymm_mult = _mm256_set1_ps(mult);
+            
+            MKL_INT col_idx;
+            for (col_idx = 0; col_idx < dst_n_cols - 15; col_idx += 16) {
+                __m256 ymm0 = _mm256_loadu_ps(src_row + col_idx);
+                __m256 ymm1 = _mm256_loadu_ps(dst_row + col_idx);
 
-    for (MKL_INT j = edges_src_ptr[dst_n_rows]; j < edges_src_ptr[dst_n_rows + 1]; j++) {
-        
-        // get index of root child
-        MKL_INT r = edges_dst_ptr[j];
-        float *x = dst_ptr + (r * dst_n_cols);
-        const float r_scale = multiplier_ptr[r];
-        const __m256 r_mult = _mm256_set1_ps(r_scale);
+                ymm1 = _mm256_fmadd_ps(ymm0, ymm_mult, ymm1);
+                _mm256_storeu_ps(dst_row + col_idx, ymm1);
 
-        MKL_INT i;
-        for(i = 0; i < dst_n_cols - 15; i+=16) {
-            __m256 ymm0 = _mm256_loadu_ps(x + i);
-            __m256 ymm1 = _mm256_loadu_ps(x + i + 8);
+                __m256 ymm2 = _mm256_loadu_ps(src_row + col_idx + 8); 
+                __m256 ymm3 = _mm256_loadu_ps(dst_row + col_idx + 8);
 
-            ymm0 = _mm256_mul_ps(ymm0, r_mult);
-            ymm1 = _mm256_mul_ps(ymm1, r_mult);
-
-            _mm256_storeu_ps(x + i, ymm0);
-            _mm256_storeu_ps(x + i + 8, ymm1);
-        }
-
-        if(i < dst_n_cols - 7) {
-            __m256 ymm0 = _mm256_loadu_ps(x + i);
-            ymm0 = _mm256_mul_ps(ymm0, r_mult);
-            _mm256_storeu_ps(x + i, ymm0);
-
-             i+=8;
-        }
-
-        for(; i < dst_n_cols; i++) {
-            x[i] *= r_scale;
-        }
-
-        lifo.push(r);
-    
-        while (!lifo.empty()) {
-            // get index of src vertex
-            MKL_INT u = lifo.top();
-            MKL_INT u_ptr_cur = edges_src_ptr[u];
-            MKL_INT u_ptr_max = edges_src_ptr[u + 1];
-            lifo.pop();
-
-            const float u_scale = multiplier_ptr[u];
-            const __m256 u_mult = _mm256_set1_ps(1 / u_scale);
-
-            for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-                // get index of dst vertex
-                MKL_INT v = edges_dst_ptr[u_ptr_cur];
-                const float v_scale = multiplier_ptr[v];
-                const __m256 v_mult = _mm256_set1_ps(v_scale);
-
-                // update destination matrix            
-                float *x = dst_ptr + (u * dst_n_cols);
-                float *y = dst_ptr + (v * dst_n_cols);
+                ymm3 = _mm256_fmadd_ps(ymm2, ymm_mult, ymm3);
+                _mm256_storeu_ps(dst_row + col_idx + 8, ymm3);
+            }
                 
-                //cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
-                MKL_INT i;
-                for (i=0; i < dst_n_cols - 15; i+=16) {
-                    __m256 ymm0 = _mm256_loadu_ps(x + i);
-                    __m256 ymm1 = _mm256_loadu_ps(x + i + 8);
-                    __m256 ymm2 = _mm256_loadu_ps(y + i);
-                    __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
+            if (col_idx < dst_n_cols - 7) {
+                __m256 ymm0 = _mm256_loadu_ps(src_row + col_idx);
+                __m256 ymm1 = _mm256_loadu_ps(dst_row + col_idx);
 
-                    ymm2 = _mm256_fmadd_ps(ymm0, u_mult, ymm2);
-                    ymm3 = _mm256_fmadd_ps(ymm1, u_mult, ymm3);
+                ymm1 = _mm256_fmadd_ps(ymm0, ymm_mult, ymm1);
+                _mm256_storeu_ps(dst_row + col_idx, ymm1);
 
-                    _mm256_storeu_ps(y + i, _mm256_mul_ps(ymm2, v_mult));
-                    _mm256_storeu_ps(y + i + 8, _mm256_mul_ps(ymm3, v_mult));
-                }
-                    
-                if (i < dst_n_cols - 7) {
-                    __m256 ymm0 = _mm256_loadu_ps(x + i);
-                    __m256 ymm1 = _mm256_loadu_ps(y + i);
+                col_idx += 8;
+            }
 
-                    ymm1 = _mm256_fmadd_ps(ymm0, u_mult, ymm1);
-                    _mm256_storeu_ps(y + i, _mm256_mul_ps(ymm1, v_mult));
-                    i += 8;
-                }
-
-                for (; i < dst_n_cols; i++) {
-                    y[i] = (y[i] + (x[i] / u_scale)) * v_scale;
-                }
-                
-                lifo.push(v);
+            for (; col_idx < dst_n_cols; col_idx++) {
+                dst_row[col_idx] += src_row[col_idx] * mult;
+                                     
             }
         }
     }
 }
 
-static inline void seq_s_fused_update_csr_int32_(const at::Tensor& edges_src,
-                                                 const at::Tensor& edges_dst,
-                                                 const at::Tensor& multiplier,
-                                                 at::Tensor& dst) {
-
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-    TORCH_CHECK(multiplier.scalar_type() == torch::kFloat32, "edge_dst (NOT torch::kFloat32)");
-
-    mkl_set_num_threads(1);
-
-    float *dst_ptr = dst.data_ptr<float>();
-    MKL_INT dst_n_rows = dst.size(0);
-    MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
-    float* multiplier_ptr = multiplier.data_ptr<float>();
-
-    std::stack<MKL_INT> lifo;
-
-    for (MKL_INT j = edges_src_ptr[dst_n_rows]; j < edges_src_ptr[dst_n_rows + 1]; j++) {
-        
-        // get index of root child
-        MKL_INT r = edges_dst_ptr[j];
-        float *x = dst_ptr + (r * dst_n_cols);
-        const float r_scale = multiplier_ptr[r];
-        const __m256 r_mult = _mm256_set1_ps(r_scale);
-
-        MKL_INT i;
-        for(i = 0; i < dst_n_cols - 15; i+=16) {
-            __m256 ymm0 = _mm256_loadu_ps(x + i);
-            __m256 ymm1 = _mm256_loadu_ps(x + i + 8);
-
-            ymm0 = _mm256_mul_ps(ymm0, r_mult);
-            ymm1 = _mm256_mul_ps(ymm1, r_mult);
-
-            _mm256_storeu_ps(x + i, ymm0);
-            _mm256_storeu_ps(x + i + 8, ymm1);
-        }
-
-        if(i < dst_n_cols - 7) {
-            __m256 ymm0 = _mm256_loadu_ps(x + i);
-            ymm0 = _mm256_mul_ps(ymm0, r_mult);
-            _mm256_storeu_ps(x + i, ymm0);
-
-             i+=8;
-        }
-
-        for(; i < dst_n_cols; i++) {
-            x[i] *= r_scale;
-        }
-
-        lifo.push(r);
-    
-        while (!lifo.empty()) {
-            // get index of src vertex
-            MKL_INT u = lifo.top();
-            MKL_INT u_ptr_cur = edges_src_ptr[u];
-            MKL_INT u_ptr_max = edges_src_ptr[u + 1];
-            lifo.pop();
-
-            const float u_scale = multiplier_ptr[u];
-            const __m256 u_mult = _mm256_set1_ps(1 / u_scale);
-
-            for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-                // get index of dst vertex
-                MKL_INT v = edges_dst_ptr[u_ptr_cur];
-                const float v_scale = multiplier_ptr[v];
-                const __m256 v_mult = _mm256_set1_ps(v_scale);
-
-                // update destination matrix            
-                float *x = dst_ptr + (u * dst_n_cols);
-                float *y = dst_ptr + (v * dst_n_cols);
-                
-                //cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
-                MKL_INT i;
-                for (i=0; i < dst_n_cols - 15; i+=16) {
-                    __m256 ymm0 = _mm256_loadu_ps(x + i);
-                    __m256 ymm1 = _mm256_loadu_ps(x + i + 8);
-                    __m256 ymm2 = _mm256_loadu_ps(y + i);
-                    __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
-
-                    ymm2 = _mm256_fmadd_ps(ymm0, u_mult, ymm2);
-                    ymm3 = _mm256_fmadd_ps(ymm1, u_mult, ymm3);
-
-                    _mm256_storeu_ps(y + i, _mm256_mul_ps(ymm2, v_mult));
-                    _mm256_storeu_ps(y + i + 8, _mm256_mul_ps(ymm3, v_mult));
-                }
-                    
-                if (i < dst_n_cols - 7) {
-                    __m256 ymm0 = _mm256_loadu_ps(x + i);
-                    __m256 ymm1 = _mm256_loadu_ps(y + i);
-
-                    ymm1 = _mm256_fmadd_ps(ymm0, u_mult, ymm1);
-                    _mm256_storeu_ps(y + i, _mm256_mul_ps(ymm1, v_mult));
-                    i += 8;
-                }
-
-                for (; i < dst_n_cols; i++) {
-                    y[i] = (y[i] + (x[i] / u_scale)) * v_scale;
-                }
-                
-                lifo.push(v);
-            }
-        }
-    }
-}
-
-
-static inline void omp_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b, 
-                                                const at::Tensor& lhs_row_e, 
-                                                const at::Tensor& lhs_col, 
-                                                const at::Tensor& lhs_val,
+static inline void omp_s_spmm_csr_int32_(const at::Tensor& lhs_row_ptr_b, 
+                                                const at::Tensor& lhs_row_ptr_e, 
+                                                const at::Tensor& lhs_col_idx, 
+                                                const at::Tensor& lhs_values,
                                                 const at::Tensor& rhs, 
-                                                const at::Tensor& edges_src,
-                                                const at::Tensor& edges_dst,
                                                 at::Tensor& dst) {
-
-    TORCH_CHECK(lhs_row_b.scalar_type() == torch::kInt32, "lhs_row_b (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_row_e.scalar_type() == torch::kInt32, "lhs_row_e (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_col.scalar_type() == torch::kInt32, "lhs_col (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_val.scalar_type() == torch::kFloat32, "lhs_val (NOT torch::kFloat32)");
-    TORCH_CHECK(rhs.scalar_type() == torch::kFloat32, "rhs tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-
-    MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
-    MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
-    MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
-    MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
-    float *lhs_val_ptr = lhs_val.data_ptr<float>();
+    CHECK_DTYPE(rhs, torch::kFloat32);
+    CHECK_DTYPE(dst, torch::kFloat32);
+    CHECK_DTYPE(lhs_row_ptr_b, torch::kInt32);
+    CHECK_DTYPE(lhs_row_ptr_e, torch::kInt32);
+    CHECK_DTYPE(lhs_col_idx, torch::kInt32);
+    CHECK_DTYPE(lhs_values, torch::kFloat32);
 
     sparse_matrix_t m_csr; 
     check_status( mkl_sparse_s_create_csr(&m_csr, 
                                           SPARSE_INDEX_BASE_ZERO,
-                                          lhs_n_rows, 
-                                          lhs_n_cols,
-                                          lhs_row_b_ptr, 
-                                          lhs_row_e_ptr,
-                                          lhs_col_ptr,
-                                          lhs_val_ptr));
+                                          dst.size(0), 
+                                          rhs.size(1),
+                                          lhs_row_ptr_b.data_ptr<MKL_INT>(), 
+                                          lhs_row_ptr_e.data_ptr<MKL_INT>(),
+                                          lhs_col_idx.data_ptr<MKL_INT>(),
+                                          lhs_values.data_ptr<float>()));
 
-    float *rhs_ptr = rhs.data_ptr<float>();
-    float *dst_ptr = dst.data_ptr<float>();
+    float *rhs_data = rhs.data_ptr<float>();
+    float *dst_data = dst.data_ptr<float>();
 
     struct matrix_descr descr;
     descr.type = SPARSE_MATRIX_TYPE_GENERAL;
@@ -1151,621 +583,144 @@ static inline void omp_s_spmm_update_csr_int32_(const at::Tensor& lhs_row_b,
                                  m_csr,
                                  descr,
                                  SPARSE_LAYOUT_ROW_MAJOR, 
-                                 rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
+                                 rhs_data, 
+                                 rhs.size(1),
+                                 rhs.size(1), 
                                  0.0f, 
-                                 dst_ptr,
-                                 lhs_n_cols));
+                                 dst_data,
+                                 rhs.size(1)));
+}
 
-    MKL_INT dst_n_rows = dst.size(0);
+static inline void omp_s_update_csr_int32_(const at::Tensor& mca_branches,
+                                           const at::Tensor& mca_row_idx,
+                                           const at::Tensor& mca_col_idx,
+                                           at::Tensor& dst) {
+    CHECK_DTYPE(dst, torch::kFloat32);
+    CHECK_DTYPE(mca_branches, torch::kInt32);
+    CHECK_DTYPE(mca_row_idx, torch::kInt32);
+    CHECK_DTYPE(mca_col_idx, torch::kInt32);
+
+    MKL_INT branch_idx, edge_idx;
     MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
+    MKL_INT mca_num_branches = mca_branches.size(0) ;
+    MKL_INT *mca_branches_data = mca_branches.data_ptr<MKL_INT>();
+    MKL_INT *mca_row_idx_data = mca_row_idx.data_ptr<MKL_INT>();
+    MKL_INT *mca_col_idx_data = mca_col_idx.data_ptr<MKL_INT>();
+    float *dst_data = dst.data_ptr<float>();
 
-    std::stack<MKL_INT> lifo;
+    #pragma omp parallel for schedule(dynamic, 50) private(branch_idx, edge_idx)
+    for (branch_idx = 0; branch_idx < mca_num_branches - 1; branch_idx++) {
+        // traverse each mca branch and update
+        for (edge_idx = mca_branches_data[branch_idx]; 
+             edge_idx < mca_branches_data[branch_idx + 1]; 
+             edge_idx++) {
+            
+            float *src_row = dst_data + (dst_n_cols * mca_row_idx_data[edge_idx]);
+            float *dst_row = dst_data + (dst_n_cols * mca_col_idx_data[edge_idx]);
+            
+            MKL_INT col_idx;
+            for (col_idx = 0; col_idx < dst_n_cols - 15; col_idx += 16) {
+                __m256 ymm0 = _mm256_loadu_ps(src_row + col_idx);
+                __m256 ymm1 = _mm256_loadu_ps(dst_row + col_idx);
+                ymm1 = _mm256_add_ps(ymm0, ymm1);
+                _mm256_storeu_ps(dst_row + col_idx, ymm1);
 
-    #pragma omp parallel for schedule(dynamic, 50) private(lifo)
-    for (MKL_INT j = edges_src_ptr[dst_n_rows]; j < edges_src_ptr[dst_n_rows + 1]; j++) {
-        lifo.push(edges_dst_ptr[j]);
-    
-        while (!lifo.empty()) {
-            // get index of src vertex
-            MKL_INT u = lifo.top();
-            MKL_INT u_ptr_cur = edges_src_ptr[u];
-            MKL_INT u_ptr_max = edges_src_ptr[u + 1];
-
-            lifo.pop();
-
-            for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-                // get index of dst vertex
-                MKL_INT v = edges_dst_ptr[u_ptr_cur];
-
-                // update destination matrix            
-                float *x = dst_ptr + (u * dst_n_cols);
-                float *y = dst_ptr + (v * dst_n_cols);
+                __m256 ymm2 = _mm256_loadu_ps(src_row + col_idx + 8);
+                __m256 ymm3 = _mm256_loadu_ps(dst_row + col_idx + 8);
+                ymm3 = _mm256_add_ps(ymm2, ymm3);
+                _mm256_storeu_ps(dst_row + col_idx + 8, ymm3);
+            }
                 
-                //cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
-                MKL_INT i;
-                for (i=0; i < dst_n_cols - 15; i+=16) {
-                        __m256 ymm0 = _mm256_loadu_ps(x + i);
-                        __m256 ymm1 = _mm256_loadu_ps(y + i);
-                        __m256 ymm2 = _mm256_loadu_ps(x + i + 8);
-                        __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
-                        ymm1 = _mm256_add_ps(ymm0, ymm1);
-                        ymm3 = _mm256_add_ps(ymm2, ymm3);
+            if (col_idx < dst_n_cols - 7) {
+                __m256 ymm0 = _mm256_loadu_ps(src_row + col_idx);
+                __m256 ymm1 = _mm256_loadu_ps(dst_row + col_idx);
+                ymm1 = _mm256_add_ps(ymm0, ymm1);
 
-                        _mm256_storeu_ps(y + i, ymm1);
-                        _mm256_storeu_ps(y + i + 8, ymm3);
-                    }
-                    
-                if (i < dst_n_cols - 7) {
-                        __m256 ymm0 = _mm256_loadu_ps(x + i);
-                        __m256 ymm1 = _mm256_loadu_ps(y + i);
-                        ymm1 = _mm256_add_ps(ymm0, ymm1);
+                _mm256_storeu_ps(dst_row + col_idx, ymm1);
+                col_idx += 8;
+            }
 
-                        _mm256_storeu_ps(y + i, ymm1);
-                        i += 8;
-                }
-
-                for (; i < dst_n_cols; i++) {
-                    y[i] += x[i];
-                }
-
-                lifo.push(v);
+            for (; col_idx < dst_n_cols; col_idx++) {
+                dst_row[col_idx] += src_row[col_idx];
             }
         }
     }
 }
 
-// this function is for GCNs only, equivalent to D((AD)(XW))
-// lhs is AD, rhs is XW, the update step is fused with left
-// most D
-static inline void omp_s_fused_spmm_update_csr_int32_(const at::Tensor& lhs_row_b, 
-                                                      const at::Tensor& lhs_row_e, 
-                                                      const at::Tensor& lhs_col, 
-                                                      const at::Tensor& lhs_val,
-                                                      const at::Tensor& rhs, 
-                                                      const at::Tensor& edges_src,
-                                                      const at::Tensor& edges_dst,
-                                                      const at::Tensor& multiplier,
-                                                      at::Tensor& dst) {
 
-    TORCH_CHECK(lhs_row_b.scalar_type() == torch::kInt32, "lhs_row_b (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_row_e.scalar_type() == torch::kInt32, "lhs_row_e (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_col.scalar_type() == torch::kInt32, "lhs_col (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_val.scalar_type() == torch::kFloat32, "lhs_val (NOT torch::kFloat32)");
-    TORCH_CHECK(rhs.scalar_type() == torch::kFloat32, "rhs tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-    TORCH_CHECK(multiplier.scalar_type() == torch::kFloat32, "edge_dst (NOT torch::kFloat32)");
-
-    MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
-    MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
-    MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
-    MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
-    float *lhs_val_ptr = lhs_val.data_ptr<float>();
-
-    sparse_matrix_t m_csr; 
-    check_status( mkl_sparse_s_create_csr(&m_csr, 
-                                          SPARSE_INDEX_BASE_ZERO,
-                                          lhs_n_rows, 
-                                          lhs_n_cols,
-                                          lhs_row_b_ptr, 
-                                          lhs_row_e_ptr,
-                                          lhs_col_ptr,
-                                          lhs_val_ptr));
-
-    float *rhs_ptr = rhs.data_ptr<float>();
-    float *dst_ptr = dst.data_ptr<float>();
-
-    struct matrix_descr descr;
-    descr.type = SPARSE_MATRIX_TYPE_GENERAL;
-
-    check_status(mkl_sparse_s_mm(SPARSE_OPERATION_NON_TRANSPOSE,
-                                 1.0f, 
-                                 m_csr,
-                                 descr,
-                                 SPARSE_LAYOUT_ROW_MAJOR, 
-                                 rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
-                                 0.0f, 
-                                 dst_ptr,
-                                 lhs_n_cols));
-
-    MKL_INT dst_n_rows = dst.size(0);
-    MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
-    float* multiplier_ptr = multiplier.data_ptr<float>();
-
-    std::stack<MKL_INT> lifo;
-
-    #pragma omp parallel for schedule(dynamic, 50) private(lifo)
-    for (MKL_INT j = edges_src_ptr[dst_n_rows]; j < edges_src_ptr[dst_n_rows + 1]; j++) {
-        
-        // get index of root child
-        MKL_INT r = edges_dst_ptr[j];
-        float *x = dst_ptr + (r * dst_n_cols);
-        const float r_scale = multiplier_ptr[r];
-        const __m256 r_mult = _mm256_set1_ps(r_scale);
-
-        MKL_INT i;
-        for(i = 0; i < dst_n_cols - 15; i+=16) {
-            __m256 ymm0 = _mm256_loadu_ps(x + i);
-            __m256 ymm1 = _mm256_loadu_ps(x + i + 8);
-
-            ymm0 = _mm256_mul_ps(ymm0, r_mult);
-            ymm1 = _mm256_mul_ps(ymm1, r_mult);
-
-            _mm256_storeu_ps(x + i, ymm0);
-            _mm256_storeu_ps(x + i + 8, ymm1);
-        }
-
-        if(i < dst_n_cols - 7) {
-            __m256 ymm0 = _mm256_loadu_ps(x + i);
-            ymm0 = _mm256_mul_ps(ymm0, r_mult);
-            _mm256_storeu_ps(x + i, ymm0);
-
-             i+=8;
-        }
-
-        for(; i < dst_n_cols; i++) {
-            x[i] *= r_scale;
-        }
-
-        lifo.push(r);
-    
-        while (!lifo.empty()) {
-            // get index of src vertex
-            MKL_INT u = lifo.top();
-            MKL_INT u_ptr_cur = edges_src_ptr[u];
-            MKL_INT u_ptr_max = edges_src_ptr[u + 1];
-            lifo.pop();
-
-            const float u_scale = multiplier_ptr[u];
-            const __m256 u_mult = _mm256_set1_ps(1 / u_scale);
-
-            for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-                // get index of dst vertex
-                MKL_INT v = edges_dst_ptr[u_ptr_cur];
-                const float v_scale = multiplier_ptr[v];
-                const __m256 v_mult = _mm256_set1_ps(v_scale);
-
-                // update destination matrix            
-                float *x = dst_ptr + (u * dst_n_cols);
-                float *y = dst_ptr + (v * dst_n_cols);
-                
-                //cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
-                MKL_INT i;
-                for (i=0; i < dst_n_cols - 15; i+=16) {
-                    __m256 ymm0 = _mm256_loadu_ps(x + i);
-                    __m256 ymm1 = _mm256_loadu_ps(x + i + 8);
-                    __m256 ymm2 = _mm256_loadu_ps(y + i);
-                    __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
-
-                    ymm2 = _mm256_fmadd_ps(ymm0, u_mult, ymm2);
-                    ymm3 = _mm256_fmadd_ps(ymm1, u_mult, ymm3);
-
-                    _mm256_storeu_ps(y + i, _mm256_mul_ps(ymm2, v_mult));
-                    _mm256_storeu_ps(y + i + 8, _mm256_mul_ps(ymm3, v_mult));
-                }
-                    
-                if (i < dst_n_cols - 7) {
-                    __m256 ymm0 = _mm256_loadu_ps(x + i);
-                    __m256 ymm1 = _mm256_loadu_ps(y + i);
-
-                    ymm1 = _mm256_fmadd_ps(ymm0, u_mult, ymm1);
-                    _mm256_storeu_ps(y + i, _mm256_mul_ps(ymm1, v_mult));
-                    i += 8;
-                }
-
-                for (; i < dst_n_cols; i++) {
-                    y[i] = (y[i] + (x[i] / u_scale)) * v_scale;
-                }
-                
-                lifo.push(v);
-            }
-        }
-    }
-}
-
-static inline void omp_s_fused_update_csr_int32_(const at::Tensor& edges_src,
-                                                 const at::Tensor& edges_dst,
+static inline void omp_s_fused_update_csr_int32_(const at::Tensor& mca_branches,
+                                                 const at::Tensor& mca_row_idx,
+                                                 const at::Tensor& mca_col_idx,
                                                  const at::Tensor& multiplier,
                                                  at::Tensor& dst) {
+    CHECK_DTYPE(dst, torch::kFloat32);
+    CHECK_DTYPE(mca_branches, torch::kInt32);
+    CHECK_DTYPE(mca_row_idx, torch::kInt32);
+    CHECK_DTYPE(mca_col_idx, torch::kInt32);
+    CHECK_DTYPE(multiplier, torch::kFloat32);
 
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-    TORCH_CHECK(multiplier.scalar_type() == torch::kFloat32, "edge_dst (NOT torch::kFloat32)");
-
-
-    float *dst_ptr = dst.data_ptr<float>();
-    MKL_INT dst_n_rows = dst.size(0);
+    MKL_INT branch_idx, edge_idx;
     MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
-    float* multiplier_ptr = multiplier.data_ptr<float>();
+    MKL_INT mca_num_branches = mca_branches.size(0) ;
+    MKL_INT *mca_branches_data = mca_branches.data_ptr<MKL_INT>();
+    MKL_INT *mca_row_idx_data = mca_row_idx.data_ptr<MKL_INT>();
+    MKL_INT *mca_col_idx_data = mca_col_idx.data_ptr<MKL_INT>();
+    float *dst_data = dst.data_ptr<float>();
+    float *mult_data = multiplier.data_ptr<float>();
 
-    std::stack<MKL_INT> lifo;
+    #pragma omp parallel for schedule(dynamic, 50) private(branch_idx, edge_idx)
+    for (branch_idx = 0; branch_idx < mca_num_branches - 1; branch_idx++) {
+        // traverse each mca branch and update
+        for (edge_idx = mca_branches_data[branch_idx]; 
+             edge_idx < mca_branches_data[branch_idx + 1]; 
+             edge_idx++) {
+            
+            MKL_INT mca_src_idx = mca_row_idx_data[edge_idx];
+            MKL_INT mca_dst_idx = mca_col_idx_data[edge_idx];
+            float *src_row = dst_data + (dst_n_cols * mca_src_idx);
+            float *dst_row = dst_data + (dst_n_cols * mca_dst_idx);
+            
+            const float mult = mult_data[mca_dst_idx] / mult_data[mca_src_idx];
+            const __m256 ymm_mult = _mm256_set1_ps(mult);
+            
+            MKL_INT col_idx;
+            for (col_idx = 0; col_idx < dst_n_cols - 15; col_idx += 16) {
+                __m256 ymm0 = _mm256_loadu_ps(src_row + col_idx);
+                __m256 ymm1 = _mm256_loadu_ps(dst_row + col_idx);
 
-    #pragma omp parallel for schedule(dynamic, 50) private(lifo)
-    for (MKL_INT j = edges_src_ptr[dst_n_rows]; j < edges_src_ptr[dst_n_rows + 1]; j++) {
-        
-        // get index of root child
-        MKL_INT r = edges_dst_ptr[j];
-        float *x = dst_ptr + (r * dst_n_cols);
-        const float r_scale = multiplier_ptr[r];
-        const __m256 r_mult = _mm256_set1_ps(r_scale);
+                ymm1 = _mm256_fmadd_ps(ymm0, ymm_mult, ymm1);
+                _mm256_storeu_ps(dst_row + col_idx, ymm1);
 
-        MKL_INT i;
-        for(i = 0; i < dst_n_cols - 15; i+=16) {
-            __m256 ymm0 = _mm256_loadu_ps(x + i);
-            __m256 ymm1 = _mm256_loadu_ps(x + i + 8);
+                __m256 ymm2 = _mm256_loadu_ps(src_row + col_idx + 8); 
+                __m256 ymm3 = _mm256_loadu_ps(dst_row + col_idx + 8);
 
-            ymm0 = _mm256_mul_ps(ymm0, r_mult);
-            ymm1 = _mm256_mul_ps(ymm1, r_mult);
-
-            _mm256_storeu_ps(x + i, ymm0);
-            _mm256_storeu_ps(x + i + 8, ymm1);
-        }
-
-        if(i < dst_n_cols - 7) {
-            __m256 ymm0 = _mm256_loadu_ps(x + i);
-            ymm0 = _mm256_mul_ps(ymm0, r_mult);
-            _mm256_storeu_ps(x + i, ymm0);
-
-             i+=8;
-        }
-
-        for(; i < dst_n_cols; i++) {
-            x[i] *= r_scale;
-        }
-
-        lifo.push(r);
-    
-        while (!lifo.empty()) {
-            // get index of src vertex
-            MKL_INT u = lifo.top();
-            MKL_INT u_ptr_cur = edges_src_ptr[u];
-            MKL_INT u_ptr_max = edges_src_ptr[u + 1];
-            lifo.pop();
-
-            const float u_scale = multiplier_ptr[u];
-            const __m256 u_mult = _mm256_set1_ps(1 / u_scale);
-
-            for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-                // get index of dst vertex
-                MKL_INT v = edges_dst_ptr[u_ptr_cur];
-                const float v_scale = multiplier_ptr[v];
-                const __m256 v_mult = _mm256_set1_ps(v_scale);
-
-                // update destination matrix            
-                float *x = dst_ptr + (u * dst_n_cols);
-                float *y = dst_ptr + (v * dst_n_cols);
+                ymm3 = _mm256_fmadd_ps(ymm2, ymm_mult, ymm3);
+                _mm256_storeu_ps(dst_row + col_idx + 8, ymm3);
+            }
                 
-                //cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
-                MKL_INT i;
-                for (i=0; i < dst_n_cols - 15; i+=16) {
-                    __m256 ymm0 = _mm256_loadu_ps(x + i);
-                    __m256 ymm1 = _mm256_loadu_ps(x + i + 8);
-                    __m256 ymm2 = _mm256_loadu_ps(y + i);
-                    __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
+            if (col_idx < dst_n_cols - 7) {
+                __m256 ymm0 = _mm256_loadu_ps(src_row + col_idx);
+                __m256 ymm1 = _mm256_loadu_ps(dst_row + col_idx);
 
-                    ymm2 = _mm256_fmadd_ps(ymm0, u_mult, ymm2);
-                    ymm3 = _mm256_fmadd_ps(ymm1, u_mult, ymm3);
+                ymm1 = _mm256_fmadd_ps(ymm0, ymm_mult, ymm1);
+                _mm256_storeu_ps(dst_row + col_idx, ymm1);
 
-                    _mm256_storeu_ps(y + i, _mm256_mul_ps(ymm2, v_mult));
-                    _mm256_storeu_ps(y + i + 8, _mm256_mul_ps(ymm3, v_mult));
-                }
-                    
-                if (i < dst_n_cols - 7) {
-                    __m256 ymm0 = _mm256_loadu_ps(x + i);
-                    __m256 ymm1 = _mm256_loadu_ps(y + i);
+                col_idx += 8;
+            }
 
-                    ymm1 = _mm256_fmadd_ps(ymm0, u_mult, ymm1);
-                    _mm256_storeu_ps(y + i, _mm256_mul_ps(ymm1, v_mult));
-                    i += 8;
-                }
-
-                for (; i < dst_n_cols; i++) {
-                    y[i] = (y[i] + (x[i] / u_scale)) * v_scale;
-                }
-                
-                lifo.push(v);
+            for (; col_idx < dst_n_cols; col_idx++) {
+                dst_row[col_idx] += src_row[col_idx] * mult;
+                                     
             }
         }
     }
-}
-
-static inline void omp_s_update_csr_int32_(const at::Tensor& edges_src,
-                                           const at::Tensor& edges_dst,
-                                           at::Tensor& dst) {
-
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-
-    MKL_INT dst_n_rows = dst.size(0);
-    MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
-    float *dst_ptr = dst.data_ptr<float>();
-
-    /*#pragma omp parallel
-    {
-        std::stack<MKL_INT> lifo;
-
-        #pragma omp for schedule(dynamic, 50)
-        for (MKL_INT i = edges_src_ptr[dst_n_rows]; i < edges_src_ptr[dst_n_rows + 1]; i++) {
-            lifo.push(edges_dst_ptr[i]);
-        
-            while (!lifo.empty()) {
-                // get index of src vertex
-                MKL_INT u = lifo.top();
-                MKL_INT u_ptr_cur = edges_src_ptr[u];
-                MKL_INT u_ptr_max = edges_src_ptr[u + 1];
-
-                lifo.pop();
-
-                for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-                    // get index of dst vertex
-                    MKL_INT v = edges_dst_ptr[u_ptr_cur];
-
-                    // update destination matrix            
-                    float *x = dst_ptr + (u * dst_n_cols);
-                    float *y = dst_ptr + (v * dst_n_cols);
-                    
-                    MKL_INT i;
-                    for (i = 0; i < dst_n_cols - 31; i += 32) {
-                        __m256 ymm0 = _mm256_loadu_ps(x + i);
-                        __m256 ymm1 = _mm256_loadu_ps(y + i);
-                        __m256 ymm2 = _mm256_loadu_ps(x + i + 8);
-                        __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
-                        __m256 ymm4 = _mm256_loadu_ps(x + i + 16);
-                        __m256 ymm5 = _mm256_loadu_ps(y + i + 16);
-                        __m256 ymm6 = _mm256_loadu_ps(x + i + 24);
-                        __m256 ymm7 = _mm256_loadu_ps(y + i + 24);
-
-                        ymm1 = _mm256_add_ps(ymm0, ymm1);
-                        ymm3 = _mm256_add_ps(ymm2, ymm3);
-                        ymm5 = _mm256_add_ps(ymm4, ymm5);
-                        ymm7 = _mm256_add_ps(ymm6, ymm7);
-
-                        _mm256_storeu_ps(y + i, ymm1);
-                        _mm256_storeu_ps(y + i + 8, ymm3);
-                        _mm256_storeu_ps(y + i + 16, ymm5);
-                        _mm256_storeu_ps(y + i + 24, ymm7);
-                    }
-
-                    if(i < dst_n_cols - 15) {
-                        __m256 ymm0 = _mm256_loadu_ps(x + i);
-                        __m256 ymm1 = _mm256_loadu_ps(y + i);
-                        __m256 ymm2 = _mm256_loadu_ps(x + i + 8);
-                        __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
-                        ymm1 = _mm256_add_ps(ymm0, ymm1);
-                        ymm3 = _mm256_add_ps(ymm2, ymm3);
-
-                        _mm256_storeu_ps(y + i, ymm1);
-                        _mm256_storeu_ps(y + i + 8, ymm3);
-                        
-                        i += 15;
-                    }
-
-                    if (i < dst_n_cols - 7) {
-                        __m256 ymm0 = _mm256_loadu_ps(x + i);
-                        __m256 ymm1 = _mm256_loadu_ps(y + i);
-                        ymm1 = _mm256_add_ps(ymm0, ymm1);
-
-                        _mm256_storeu_ps(y + i, ymm1);
-
-                        i+=8;
-                    }
-                    
-                    for (; i < dst_n_cols; i++) {
-                        y[i] += x[i];
-                    }
-
-                    lifo.push(v);
-                }
-            }
-        }
-    }
-*/
-    #pragma omp parallel
-    {
-        std::stack<MKL_INT> lifo;
-
-        #pragma omp for schedule(dynamic, 50)
-        for (MKL_INT i = edges_src_ptr[dst_n_rows]; i < edges_src_ptr[dst_n_rows + 1]; i++) {
-            lifo.push(edges_dst_ptr[i]);
-        
-            while (!lifo.empty()) {
-                // get index of src vertex
-                MKL_INT u = lifo.top();
-                MKL_INT u_ptr_cur = edges_src_ptr[u];
-                MKL_INT u_ptr_max = edges_src_ptr[u + 1];
-
-                lifo.pop();
-
-                for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-                    // get index of dst vertex
-                    MKL_INT v = edges_dst_ptr[u_ptr_cur];
-
-                    // update destination matrix            
-                    float *x = dst_ptr + (u * dst_n_cols);
-                    float *y = dst_ptr + (v * dst_n_cols);
-                    
-                    cblas_saxpy(dst_n_cols, 1.0f, x, 1, y, 1);
-
-                    lifo.push(v);
-                }
-            }
-        }
-    }
-}
-
-static inline void omp_s_update_avx_int32_(const at::Tensor& edges_src,
-                                           const at::Tensor& edges_dst,
-                                           at::Tensor& dst) {
-
-    TORCH_CHECK(edges_src.scalar_type() == torch::kInt32, "edges_src (NOT torch::kInt32)");
-    TORCH_CHECK(edges_dst.scalar_type() == torch::kInt32, "edge_dst (NOT torch::kInt32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-
-    MKL_INT dst_n_rows = dst.size(0);
-    MKL_INT dst_n_cols = dst.size(1);
-    MKL_INT *edges_src_ptr = edges_src.data_ptr<MKL_INT>();
-    MKL_INT *edges_dst_ptr = edges_dst.data_ptr<MKL_INT>();
-    float *dst_ptr = dst.data_ptr<float>();
-
-    #pragma omp parallel
-    {
-        std::stack<MKL_INT> lifo;
-
-        #pragma omp for schedule(dynamic, 50)
-        for (MKL_INT i = edges_src_ptr[dst_n_rows]; i < edges_src_ptr[dst_n_rows + 1]; i++) {
-            lifo.push(edges_dst_ptr[i]);
-        
-            while (!lifo.empty()) {
-                // get index of src vertex
-                MKL_INT u = lifo.top();
-                MKL_INT u_ptr_cur = edges_src_ptr[u];
-                MKL_INT u_ptr_max = edges_src_ptr[u + 1];
-
-                lifo.pop();
-
-                for (;u_ptr_cur < u_ptr_max; u_ptr_cur++) {
-                    // get index of dst vertex
-                    MKL_INT v = edges_dst_ptr[u_ptr_cur];
-
-                    // update destination matrix            
-                    float *x = dst_ptr + (u * dst_n_cols);
-                    float *y = dst_ptr + (v * dst_n_cols);
-                    
-                    MKL_INT i;
-                    for (i = 0; i < dst_n_cols - 31; i += 32) {
-                        __m256 ymm0 = _mm256_loadu_ps(x + i);
-                        __m256 ymm1 = _mm256_loadu_ps(y + i);
-                        __m256 ymm2 = _mm256_loadu_ps(x + i + 8);
-                        __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
-                        __m256 ymm4 = _mm256_loadu_ps(x + i + 16);
-                        __m256 ymm5 = _mm256_loadu_ps(y + i + 16);
-                        __m256 ymm6 = _mm256_loadu_ps(x + i + 24);
-                        __m256 ymm7 = _mm256_loadu_ps(y + i + 24);
-
-                        ymm1 = _mm256_add_ps(ymm0, ymm1);
-                        ymm3 = _mm256_add_ps(ymm2, ymm3);
-                        ymm5 = _mm256_add_ps(ymm4, ymm5);
-                        ymm7 = _mm256_add_ps(ymm6, ymm7);
-
-                        _mm256_storeu_ps(y + i, ymm1);
-                        _mm256_storeu_ps(y + i + 8, ymm3);
-                        _mm256_storeu_ps(y + i + 16, ymm5);
-                        _mm256_storeu_ps(y + i + 24, ymm7);
-                    }
-
-                    if(i < dst_n_cols - 15) {
-                        __m256 ymm0 = _mm256_loadu_ps(x + i);
-                        __m256 ymm1 = _mm256_loadu_ps(y + i);
-                        __m256 ymm2 = _mm256_loadu_ps(x + i + 8);
-                        __m256 ymm3 = _mm256_loadu_ps(y + i + 8);
-                        ymm1 = _mm256_add_ps(ymm0, ymm1);
-                        ymm3 = _mm256_add_ps(ymm2, ymm3);
-
-                        _mm256_storeu_ps(y + i, ymm1);
-                        _mm256_storeu_ps(y + i + 8, ymm3);
-                        
-                        i += 15;
-                    }
-
-                    if (i < dst_n_cols - 7) {
-                        __m256 ymm0 = _mm256_loadu_ps(x + i);
-                        __m256 ymm1 = _mm256_loadu_ps(y + i);
-                        ymm1 = _mm256_add_ps(ymm0, ymm1);
-
-                        _mm256_storeu_ps(y + i, ymm1);
-
-                        i+=8;
-                    }
-                    
-                    for (; i < dst_n_cols; i++) {
-                        y[i] += x[i];
-                    }
-
-                    lifo.push(v);
-                }
-            }
-        }
-    }
-}
-
-static inline void omp_s_spmm_csr_int32_(const at::Tensor& lhs_row_b, 
-                                         const at::Tensor& lhs_row_e, 
-                                         const at::Tensor& lhs_col, 
-                                         const at::Tensor& lhs_val,
-                                         const at::Tensor& rhs, 
-                                         at::Tensor& dst) {
-
-    TORCH_CHECK(lhs_row_b.scalar_type() == torch::kInt32, "lhs_row_b (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_row_e.scalar_type() == torch::kInt32, "lhs_row_e (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_col.scalar_type() == torch::kInt32, "lhs_col (NOT torch::kInt32)");
-    TORCH_CHECK(lhs_val.scalar_type() == torch::kFloat32, "lhs_val (NOT torch::kFloat32)");
-    TORCH_CHECK(rhs.scalar_type() == torch::kFloat32, "rhs tensor (NOT torch::kFloat32)");
-    TORCH_CHECK(dst.scalar_type() == torch::kFloat32, "dst tensor (NOT torch::kFloat32)");
-    
-    MKL_INT lhs_n_rows = dst.size(0);
-    MKL_INT lhs_n_cols = rhs.size(1);
-    MKL_INT *lhs_row_b_ptr = lhs_row_b.data_ptr<MKL_INT>();
-    MKL_INT *lhs_row_e_ptr = lhs_row_e.data_ptr<MKL_INT>();
-    MKL_INT *lhs_col_ptr = lhs_col.data_ptr<MKL_INT>();
-    float *lhs_val_ptr = lhs_val.data_ptr<float>();
-
-    sparse_matrix_t m_csr; 
-    check_status( mkl_sparse_s_create_csr(&m_csr, 
-                                          SPARSE_INDEX_BASE_ZERO,
-                                          lhs_n_rows, 
-                                          lhs_n_cols,
-                                          lhs_row_b_ptr, 
-                                          lhs_row_e_ptr,
-                                          lhs_col_ptr,
-                                          lhs_val_ptr));
-
-    float *rhs_ptr = rhs.data_ptr<float>();
-    float *dst_ptr = dst.data_ptr<float>();
-
-    struct matrix_descr descr;
-    descr.type = SPARSE_MATRIX_TYPE_GENERAL;
-
-    check_status(mkl_sparse_s_mm(SPARSE_OPERATION_NON_TRANSPOSE,
-                                 1.0f, 
-                                 m_csr,
-                                 descr,
-                                 SPARSE_LAYOUT_ROW_MAJOR, 
-                                 rhs_ptr, 
-                                 lhs_n_cols,
-                                 lhs_n_cols, 
-                                 0.0f, 
-                                 dst_ptr,
-                                 lhs_n_cols));
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("from_coo_int32_t_v1_", &cbm_init_v1_);
-    m.def("from_coo_int32_t_v2_", &cbm_init_v2_);
-    m.def("seq_s_spmm_update_csr_int32",&seq_s_spmm_update_csr_int32_);
-    m.def("seq_s_update_csr_int32",&seq_s_update_csr_int32_);
-    m.def("seq_s_spmm_csr_int32",&seq_s_spmm_csr_int32_);
-    m.def("omp_s_spmm_update_csr_int32",&omp_s_spmm_update_csr_int32_);
-    m.def("omp_s_update_avx_int32",&omp_s_update_avx_int32_);
-    m.def("omp_s_update_csr_int32",&omp_s_update_csr_int32_);
-    m.def("omp_s_spmm_csr_int32",&omp_s_spmm_csr_int32_);
-    m.def("omp_s_fused_spmm_update_csr_int32",&omp_s_fused_spmm_update_csr_int32_);
-    m.def("omp_s_fused_update_csr_int32",&omp_s_fused_update_csr_int32_);
-    m.def("seq_s_fused_spmm_update_csr_int32",&seq_s_fused_spmm_update_csr_int32_);
-    m.def("seq_s_fused_update_csr_int32",&seq_s_fused_update_csr_int32_);
+    m.def("init", &cbm_init_);
+    m.def("s_spmm_update_csr_int32",&omp_s_spmm_update_csr_int32_);
+    m.def("s_spmm_fused_update_csr_int32",&omp_s_fused_spmm_update_csr_int32_);
+    m.def("s_spmm_csr_int32",&omp_s_spmm_csr_int32_);
+    m.def("s_update_csr_int32",&omp_s_update_csr_int32_);
+    m.def("s_fused_update_csr_int32",&omp_s_fused_update_csr_int32_);
 }
